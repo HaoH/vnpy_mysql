@@ -1,6 +1,9 @@
 from datetime import datetime
 from typing import List
 
+from ex_vnpy.db_object import DbBasicStockData
+from ex_vnpy.object import BasicStockData
+
 from peewee import (
     AutoField,
     CharField,
@@ -498,3 +501,13 @@ class MysqlDatabase(BaseDatabase):
             overview.end = end_bar.datetime
 
             overview.save()
+
+    def get_basic_stock_data(self) -> List[BasicStockData]:
+        """查询数据库中的基础信息汇总信息"""
+
+        s: ModelSelect = DbBasicStockData.select()
+        overviews = []
+        for overview in s:
+            overview.exchange = Exchange(overview.exchange)
+            overviews.append(overview)
+        return overviews
