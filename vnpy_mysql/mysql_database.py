@@ -1,8 +1,5 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import List
-
-from ex_vnpy.db_object import DbBasicStockData
-from ex_vnpy.object import BasicStockData
 
 from peewee import (
     AutoField,
@@ -15,7 +12,10 @@ from peewee import (
     ModelSelect,
     ModelDelete,
     chunked,
-    fn
+    fn,
+    DoubleField,
+    DateField,
+    BooleanField
 )
 from playhouse.shortcuts import ReconnectMixin
 
@@ -29,6 +29,7 @@ from vnpy.trader.database import (
     convert_tz
 )
 from vnpy.trader.setting import SETTINGS
+from ex_vnpy.object import BasicStockData
 
 
 class ReconnectMySQLDatabase(ReconnectMixin, PeeweeMySQLDatabase):
@@ -160,6 +161,52 @@ class DbTickOverview(Model):
     class Meta:
         database: PeeweeMySQLDatabase = db
         indexes: tuple = ((("symbol", "exchange"), True),)
+
+class DbBasicStockData(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+
+    symbol: str = CharField()
+    exchange: str = CharField()
+
+    shares_total: float = DoubleField(null=True)
+    shares_total_a: float = DoubleField(null=True)
+    shares_circ_a: float = DoubleField(null=True)
+    shares_non_circ_a: float = DoubleField(null=True)
+
+    ex_date: date = DateField(null=True)
+
+    industry_first: str = CharField()
+    industry_second: str = CharField()
+    industry_third: str = CharField()
+    industry_forth: str = CharField()
+
+    industry_code_zz: str = CharField()
+    industry_code: str = CharField()  # 统计局/证监会行业分类代码
+
+    index_sz50: bool = BooleanField()
+    index_hs300: bool = BooleanField()
+    index_zz500: bool = BooleanField()
+    index_zz800: bool = BooleanField()
+    index_zz1000: bool = BooleanField()
+    index_normal: bool = BooleanField()
+
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "exchange", "update_dt"), True),)
+
+    def has_changed(self, bs):
+        sf_dict = self.__dict__
+        keys = sf_dict['__data__'].keys()
+        for key in keys:
+            if key not in ['id', 'update_dt']:
+                if getattr(self, key) != getattr(bs, key):
+                    print('change: {}. old: {}, new: {}'.format(key, getattr(self, key), getattr(bs, key)))
+                    return True
+        return False
 
 
 class MysqlDatabase(BaseDatabase):
