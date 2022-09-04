@@ -168,6 +168,7 @@ class DbBasicStockData(Model):
     id = AutoField()
 
     symbol: str = CharField()
+    name: str = CharField()
     exchange: str = CharField()
 
     shares_total: float = DoubleField(null=True)
