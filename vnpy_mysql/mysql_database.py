@@ -1,5 +1,6 @@
+import hashlib
 from datetime import datetime, date
-from typing import List
+from typing import List, Dict
 
 from peewee import (
     AutoField,
@@ -19,7 +20,7 @@ from peewee import (
 )
 from playhouse.shortcuts import ReconnectMixin
 
-from vnpy.trader.constant import Exchange, Interval
+from vnpy.trader.constant import Exchange, Interval, Market
 from vnpy.trader.object import BarData, TickData
 from vnpy.trader.database import (
     BaseDatabase,
@@ -170,6 +171,7 @@ class DbBasicStockData(Model):
     symbol: str = CharField()
     name: str = CharField()
     exchange: str = CharField()
+    market: str = CharField()
 
     shares_total: float = DoubleField(null=True)
     shares_total_a: float = DoubleField(null=True)
@@ -184,20 +186,22 @@ class DbBasicStockData(Model):
     industry_forth: str = CharField()
 
     industry_code_zz: str = CharField()
-    industry_code: str = CharField()  # 统计局/证监会行业分类代码
+    industry_code: str = CharField(null=True)  # 统计局/证监会行业分类代码，可选
 
-    index_sz50: bool = BooleanField()
-    index_hs300: bool = BooleanField()
-    index_zz500: bool = BooleanField()
-    index_zz800: bool = BooleanField()
-    index_zz1000: bool = BooleanField()
-    index_normal: bool = BooleanField()
+    index_sz50: bool = BooleanField(default=False)  # 默认为0
+    index_hs300: bool = BooleanField(default=False)
+    index_zz500: bool = BooleanField(default=False)
+    index_zz800: bool = BooleanField(default=False)
+    index_zz1000: bool = BooleanField(default=False)
+    index_normal: bool = BooleanField(default=False)
 
+    hash_value: str = CharField()               # 对象的hash值
     update_dt: datetime = DateTimeField()
+
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "exchange", "update_dt"), True),)
+        indexes = ((("symbol", "exchange", "market"), True),)
 
     def has_changed(self, bs):
         sf_dict = self.__dict__
@@ -209,6 +213,19 @@ class DbBasicStockData(Model):
                     return True
         return False
 
+    @classmethod
+    def get_hash_value(cls, sf_dict):
+        # sf_dict = self.__dict__['__data__']
+        for key in ['id', 'hash_value', 'update_dt']:
+            if key in sf_dict.keys():
+                sf_dict.pop(key)
+        return hashlib.md5(sf_dict.__str__().encode('utf-8')).hexdigest()
+
+    def save(self, *args, **kwargs):
+        sf_dict = self.__dict__['__data__']
+        self.hash_value = DbBasicStockData.get_hash_value(sf_dict)
+        self.update_dt = datetime.now()
+        return super(DbBasicStockData, self).save(*args, **kwargs)
 
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
@@ -550,12 +567,16 @@ class MysqlDatabase(BaseDatabase):
 
             overview.save()
 
-    def get_basic_stock_data(self) -> List[BasicStockData]:
+    def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
         """查询数据库中的基础信息汇总信息"""
 
         s: ModelSelect = DbBasicStockData.select()
-        overviews = []
+        overviews = {}
         for overview in s:
             overview.exchange = Exchange(overview.exchange)
-            overviews.append(overview)
+            market = Market(overview.market)
+            overview.market = market
+            if market not in overviews:
+                overviews[market] = []
+            overviews[overview.market].append(overview)
         return overviews
