@@ -507,6 +507,8 @@ class MysqlDatabase(BaseDatabase):
         for overview in s:
             overview.exchange = Exchange(overview.exchange)
             overview.interval = Interval(overview.interval)
+            overview.start = datetime.fromtimestamp(overview.start.timestamp(), DB_TZ)
+            overview.end = datetime.fromtimestamp(overview.end.timestamp(), DB_TZ)
             overviews.append(overview)
         return overviews
 
