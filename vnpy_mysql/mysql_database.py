@@ -163,6 +163,7 @@ class DbTickOverview(Model):
         database: PeeweeMySQLDatabase = db
         indexes: tuple = ((("symbol", "exchange"), True),)
 
+
 class DbBasicStockData(Model):
     """股票列表映射对象"""
 
@@ -195,9 +196,8 @@ class DbBasicStockData(Model):
     index_zz1000: bool = BooleanField(default=False)
     index_normal: bool = BooleanField(default=False)
 
-    hash_value: str = CharField()               # 对象的hash值
+    hash_value: str = CharField()  # 对象的hash值
     update_dt: datetime = DateTimeField()
-
 
     class Meta:
         database: PeeweeMySQLDatabase = db
@@ -226,6 +226,7 @@ class DbBasicStockData(Model):
         self.hash_value = DbBasicStockData.get_hash_value(sf_dict)
         self.update_dt = datetime.now()
         return super(DbBasicStockData, self).save(*args, **kwargs)
+
 
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
@@ -350,12 +351,12 @@ class MysqlDatabase(BaseDatabase):
         return True
 
     def load_bar_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval,
-        start: datetime,
-        end: datetime
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            start: datetime,
+            end: datetime
     ) -> List[BarData]:
         """"""
         s: ModelSelect = (
@@ -389,11 +390,11 @@ class MysqlDatabase(BaseDatabase):
         return bars
 
     def load_tick_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        start: datetime,
-        end: datetime
+            self,
+            symbol: str,
+            exchange: Exchange,
+            start: datetime,
+            end: datetime
     ) -> List[TickData]:
         """读取TICK数据"""
         s: ModelSelect = (
@@ -411,7 +412,7 @@ class MysqlDatabase(BaseDatabase):
                 symbol=db_tick.symbol,
                 exchange=Exchange(db_tick.exchange),
                 datetime=datetime.fromtimestamp(db_tick.datetime.timestamp(), DB_TZ),
-                name=db_tick.name,
+                name=db_tick.o_name,
                 volume=db_tick.volume,
                 turnover=db_tick.turnover,
                 open_interest=db_tick.open_interest,
@@ -451,10 +452,10 @@ class MysqlDatabase(BaseDatabase):
         return ticks
 
     def delete_bar_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval
     ) -> int:
         """删除K线数据"""
         d: ModelDelete = DbBarData.delete().where(
@@ -474,9 +475,9 @@ class MysqlDatabase(BaseDatabase):
         return count
 
     def delete_tick_data(
-        self,
-        symbol: str,
-        exchange: Exchange
+            self,
+            symbol: str,
+            exchange: Exchange
     ) -> int:
         """删除TICK数据"""
         d: ModelDelete = DbTickData.delete().where(
@@ -545,25 +546,25 @@ class MysqlDatabase(BaseDatabase):
 
             start_bar: DbBarData = (
                 DbBarData.select()
-                .where(
+                    .where(
                     (DbBarData.symbol == data.symbol)
                     & (DbBarData.exchange == data.exchange)
                     & (DbBarData.interval == data.interval)
                 )
-                .order_by(DbBarData.datetime.asc())
-                .first()
+                    .order_by(DbBarData.datetime.asc())
+                    .first()
             )
             overview.start = start_bar.datetime
 
             end_bar: DbBarData = (
                 DbBarData.select()
-                .where(
+                    .where(
                     (DbBarData.symbol == data.symbol)
                     & (DbBarData.exchange == data.exchange)
                     & (DbBarData.interval == data.interval)
                 )
-                .order_by(DbBarData.datetime.desc())
-                .first()
+                    .order_by(DbBarData.datetime.desc())
+                    .first()
             )
             overview.end = end_bar.datetime
 
@@ -582,3 +583,19 @@ class MysqlDatabase(BaseDatabase):
                 overviews[market] = []
             overviews[overview.market].append(overview)
         return overviews
+
+    def get_basic_info_by_symbol(self, symbol) -> BasicStockData:
+        """查询数据库中的基础信息"""
+
+        db_data: DbBasicStockData = (
+            DbBasicStockData.select()
+                .where(DbBasicStockData.symbol == symbol)
+                .first()
+        )
+        dc = db_data.__data__
+        for key in ("id", "hash_value"):
+            dc.pop(key)
+
+        dc["gateway_name"] = ""
+        basic_data: BasicStockData = BasicStockData(**dc)
+        return basic_data
