@@ -30,7 +30,7 @@ from vnpy.trader.database import (
     convert_tz
 )
 from vnpy.trader.setting import SETTINGS
-from ex_vnpy.object import BasicStockData, BasicIndexData
+from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData
 from ex_vnpy.trade_plan import StoplossReason
 
 
@@ -272,6 +272,8 @@ class DbBasicIndexData(Model):
     has_price: bool = BooleanField(default=True)
     has_weight: bool = BooleanField(default=True)
     has_components: bool = BooleanField(default=True)
+
+    is_core_index: bool = BooleanField(default=False)
 
     class Meta:
         database: PeeweeMySQLDatabase = db
@@ -898,18 +900,31 @@ class MysqlDatabase(BaseDatabase):
             overviews[overview.market].append(overview)
         return overviews
 
-    def get_basic_info_by_symbol(self, symbol) -> BasicStockData:
+    def get_basic_info_by_symbol(self, symbol, symbol_type: str = 'CS') -> BasicSymbolData:
         """查询数据库中的基础信息"""
 
-        db_data: DbBasicStockData = (
-            DbBasicStockData.select()
-                .where(DbBasicStockData.symbol == symbol)
-                .first()
-        )
-        dc = db_data.__data__
-        for key in ("id", "hash_value"):
-            dc.pop(key)
+        basic_data: BasicSymbolData = None
+        if symbol_type == 'CS':
+            db_data: DbBasicStockData = (
+                DbBasicStockData.select()
+                    .where(DbBasicStockData.symbol == symbol)
+                    .first()
+            )
+            dc = db_data.__data__
+            dc["symbol_type"] = symbol_type
+            for key in ("id", "hash_value"):
+                dc.pop(key)
 
-        dc["gateway_name"] = ""
-        basic_data: BasicStockData = BasicStockData(**dc)
+            basic_data = BasicStockData(**dc)
+        elif symbol_type == 'INDX':
+            db_data: DbBasicIndexData = (
+                DbBasicIndexData.select()
+                .where(DbBasicIndexData.symbol == symbol)
+                .first()
+            )
+            dc = db_data.__data__
+            dc.pop("id")
+            dc["symbol_type"] = symbol_type
+            basic_data = BasicIndexData(**dc)
+
         return basic_data
