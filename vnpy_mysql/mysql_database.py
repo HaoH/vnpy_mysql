@@ -281,7 +281,15 @@ class DbBasicIndexData(Model):
 
 
 class DbBacktestingResults(Model):
-    """股票回测结果"""
+    """股票回测结果
+ALTER TABLE dbbacktestingresults add has_sl_HALow INT;
+update dbbacktestingresults set has_sl_HALow = 0;
+ALTER TABLE dbbacktestingresults MODIFY COLUMN has_sl_HALow INT NOT NULL;
+
+ALTER TABLE dbbacktestingresults add do_sl_HALow INT;
+update dbbacktestingresults set do_sl_HALow = 0;
+ALTER TABLE dbbacktestingresults MODIFY COLUMN do_sl_HALow INT NOT NULL;
+    """
 
     id = AutoField()
     symbol: str = CharField()
@@ -350,6 +358,7 @@ class DbBacktestingResults(Model):
     has_sl_LargeDrop: int = IntegerField()
     has_sl_LostMovement: int = IntegerField()
     has_sl_TopPivot: int = IntegerField()
+    has_sl_HALow: int = IntegerField()
     do_sl_Init: int = IntegerField()
     do_sl_Detector: int = IntegerField()
     do_sl_Dynamic: int = IntegerField()
@@ -366,6 +375,7 @@ class DbBacktestingResults(Model):
     do_sl_LargeDrop: int = IntegerField()
     do_sl_LostMovement: int = IntegerField()
     do_sl_TopPivot: int = IntegerField()
+    do_sl_HALow: int = IntegerField()
 
     class Meta:
         database: PeeweeMySQLDatabase = db
@@ -878,12 +888,16 @@ class MysqlDatabase(BaseDatabase):
         s: ModelSelect = DbBasicStockData.select()
         overviews = {}
         for overview in s:
-            overview.exchange = Exchange(overview.exchange)
+            so = overview.__data__
+            so["exchange"] = Exchange(overview.exchange)
             market = Market(overview.market)
-            overview.market = market
+            so["market"] = market
+            so["symbol_type"] = "CS"
+            so.pop("id")
+            so.pop("hash_value")
             if market not in overviews:
                 overviews[market] = []
-            overviews[overview.market].append(overview)
+            overviews[market].append(BasicStockData(**so))
         return overviews
 
     def get_basic_index_data(self) -> Dict[Market, List[BasicIndexData]]:
@@ -892,12 +906,15 @@ class MysqlDatabase(BaseDatabase):
         s: ModelSelect = DbBasicIndexData.select()
         overviews = {}
         for overview in s:
-            overview.exchange = Exchange(overview.exchange)
+            io = overview.__data__
+            io["exchange"] = Exchange(overview.exchange)
             market = Market(overview.market)
-            overview.market = market
+            io["market"] = market
+            io["symbol_type"] = "INDX"
+            io.pop("id")
             if market not in overviews:
                 overviews[market] = []
-            overviews[overview.market].append(overview)
+            overviews[market].append(BasicIndexData(**io))
         return overviews
 
     def get_basic_info_by_symbol(self, symbol, symbol_type: str = 'CS') -> BasicSymbolData:
