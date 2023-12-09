@@ -386,6 +386,29 @@ ALTER TABLE dbbacktestingresults MODIFY COLUMN do_sl_HALow INT NOT NULL;
         return super(DbBacktestingResults, self).save(*args, **kwargs)
 
 
+class DbStockCapitalData(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+
+    symbol: str = CharField(max_length=32)
+    date: date = DateField()
+    level: str = CharField(max_length=32)
+    role: str = CharField(max_length=16)
+    trade_time: str = CharField(max_length=8)
+    direction: str = CharField(max_length=8)
+    interval: str = CharField(max_length=8)
+    type: str = CharField(max_length=8)
+    order_count: int = IntegerField()
+    order_volume: int = IntegerField()
+    turnover: float = DoubleField()
+    volume: int = IntegerField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
+
+
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
 
