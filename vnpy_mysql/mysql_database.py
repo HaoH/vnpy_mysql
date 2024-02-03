@@ -16,9 +16,10 @@ from peewee import (
     fn,
     DoubleField,
     DateField,
-    BooleanField, BigIntegerField
+    BooleanField, BigIntegerField, ForeignKeyField
 )
 from playhouse.shortcuts import ReconnectMixin
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from vnpy.trader.constant import Exchange, Interval, Market
 from vnpy.trader.object import BarData, TickData
@@ -189,6 +190,74 @@ class DbTickOverview(Model):
         indexes: tuple = ((("symbol", "exchange"), True),)
 
 
+class DbSymbol(Model):
+    """股票、指数、基金等各投资品列表映射对象"""
+
+    id = AutoField()
+    symbol: str = CharField(null=False)
+    name: str = CharField(null=False)
+    exchange: str = CharField(null=False)
+    market: str = CharField(null=False, default='CN')
+    type: str = CharField(null=False, default='CS')
+    status: str = CharField(null=False, default='active')
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "exchange", "market", "type"), True),)
+
+
+class DbStockMeta(Model):
+    id = AutoField()
+
+    symbol = ForeignKeyField(DbSymbol, backref='meta', verbose_name="股票基础信息")
+    ex_date: date = DateField(default="'1970-01-01'")
+
+    industry_first: str = CharField()
+    industry_second: str = CharField()
+    industry_third: str = CharField()
+    industry_forth: str = CharField()
+
+    industry_code_zz: str = CharField()
+    industry_code: str = CharField(null=True)  # 统计局/证监会行业分类代码，可选
+
+    index_sz50: bool = BooleanField(default=False)  # 默认为0
+    index_hs300: bool = BooleanField(default=False)
+    index_zz500: bool = BooleanField(default=False)
+    index_zz800: bool = BooleanField(default=False)
+    index_zz1000: bool = BooleanField(default=False)
+    index_normal: bool = BooleanField(default=False)
+
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+
+
+class DbIndexMeta(Model):
+    """Index列表映射对象"""
+
+    id = AutoField()
+    symbol = ForeignKeyField(DbSymbol, backref='meta', verbose_name="指数基础信息")
+
+    full_name: str = CharField()
+
+    volume: int = BigIntegerField(null=True)
+    turnover: int = BigIntegerField(null=True)
+
+    publish_date: date = DateField(null=False)
+    exit_date: date = DateField(null=False)
+    has_price: bool = BooleanField(default=True)
+    has_weight: bool = BooleanField(default=True)
+    has_components: bool = BooleanField(default=True)
+
+    is_core_index: bool = BooleanField(default=False)
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+
+
+# TODO: remove
 class DbBasicStockData(Model):
     """股票列表映射对象"""
 
@@ -221,6 +290,8 @@ class DbBasicStockData(Model):
     index_zz1000: bool = BooleanField(default=False)
     index_normal: bool = BooleanField(default=False)
 
+    active: bool = BooleanField(default=True)
+
     hash_value: str = CharField()  # 对象的hash值
     update_dt: datetime = DateTimeField()
 
@@ -252,7 +323,7 @@ class DbBasicStockData(Model):
         self.update_dt = datetime.now()
         return super(DbBasicStockData, self).save(*args, **kwargs)
 
-
+# TODO: remove
 class DbBasicIndexData(Model):
     """Index列表映射对象"""
 
@@ -409,6 +480,143 @@ class DbStockCapitalData(Model):
         indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
 
 
+class DbStockCapitalFlatData(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+
+    symbol: str = CharField(max_length=32)
+    date: date = DateField()
+    interval: str = CharField(max_length=8)
+    type: str = CharField(max_length=8)
+    order_count_buy_XL: int = IntegerField()
+    order_count_buy_L: int = IntegerField()
+    order_count_buy_M: int = IntegerField()
+    order_count_buy_S: int = IntegerField()
+    order_count_sale_XL: int = IntegerField()
+    order_count_sale_L: int = IntegerField()
+    order_count_sale_M: int = IntegerField()
+    order_count_sale_S: int = IntegerField()
+    order_volume_buy_XL: int = IntegerField()
+    order_volume_buy_L: int = IntegerField()
+    order_volume_buy_M: int = IntegerField()
+    order_volume_buy_S: int = IntegerField()
+    order_volume_sale_XL: int = IntegerField()
+    order_volume_sale_L: int = IntegerField()
+    order_volume_sale_M: int = IntegerField()
+    order_volume_sale_S: int = IntegerField()
+    turnover_buy_XL: int = IntegerField()
+    turnover_buy_L: int = IntegerField()
+    turnover_buy_M: int = IntegerField()
+    turnover_buy_S: int = IntegerField()
+    turnover_sale_XL: int = IntegerField()
+    turnover_sale_L: int = IntegerField()
+    turnover_sale_M: int = IntegerField()
+    turnover_sale_S: int = IntegerField()
+    volume_buy_XL: int = IntegerField()
+    volume_buy_L: int = IntegerField()
+    volume_buy_M: int = IntegerField()
+    volume_buy_S: int = IntegerField()
+    volume_sale_XL: int = IntegerField()
+    volume_sale_L: int = IntegerField()
+    volume_sale_M: int = IntegerField()
+    volume_sale_S: int = IntegerField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "date", "interval", "type"), True),)
+
+
+class DbUserData(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+    email: str = CharField(max_length=32, unique=True)
+    username: str = CharField(max_length=32)
+    password_hash: str = CharField(max_length=256)
+
+    update_dt: datetime = DateTimeField()
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def save(self, *args, **kwargs):
+        self.update_dt = datetime.now()
+        return super(DbUserData, self).save(*args, **kwargs)
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        # indexes = (("email", True),)
+
+
+class DbSymbolLists(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+    name: str = CharField(max_length=128, null=False)
+    # rank: 表示排行榜，比如每日的龙虎榜
+    # board: 交易所板块
+    # index: 表示指数列表
+    # industry: 表示行业板块
+    # concept: 表示概念板块
+    # area: 表示地域板块
+    # personal: 表示个人自选股
+    # system: 表示系统用途的列表
+    type: str = CharField(max_length=32, null=False)
+    dt: date = DateField()
+    create_dt: datetime = DateTimeField()
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("name", 'type', 'dt'), True),)
+
+
+class DbSymbolListMap(Model):
+    """股票列表关系对象"""
+
+    id = AutoField()
+    symbol_list = ForeignKeyField(DbSymbolLists, backref='symbols', verbose_name="股票列表")
+    symbol = ForeignKeyField(DbSymbol, backref='lists', verbose_name="股票")
+    create_dt: datetime = DateTimeField()
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = (
+            # 创建一个联合索引
+            (('symbol_list', 'symbol'), True),
+        )
+
+
+class DbDailyStatData(Model):
+    id = AutoField()
+    symbol = ForeignKeyField(DbSymbol, backref='meta', verbose_name="股票基础信息")
+    datetime: datetime = DateTimeField()
+    interval: str = CharField()
+
+    # last_price: float = DoubleField()
+    change_pct: float = DoubleField()
+    volume_ratio: float = DoubleField()
+    # large_capital_amount_in: float = DoubleField()      # 主力资金流入
+    change_pct_5u: float = DoubleField()
+    change_pct_10u: float = DoubleField()
+    change_pct_22u: float = DoubleField()
+
+    # 以下仅适用于interval=d
+    cont_up_days: float = IntegerField()        # 连续上涨天数
+    cont_max_up_days: float = IntegerField()    # 连续涨停天数，最大连续间断不超过1天
+
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes: tuple = ((("symbol", "interval", "datetime"), True),)
+
+
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
 
@@ -417,6 +625,7 @@ class MysqlDatabase(BaseDatabase):
         self.db: PeeweeMySQLDatabase = db
         self.db.connect()
         self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
+        self.db.create_tables([DbSymbolLists, DbBasicStockData, DbSymbolListMap])
 
     def save_index_bar_data(self, bars: List[BarData], stream: bool = False) -> bool:
         """保存Index K线数据"""
@@ -908,36 +1117,53 @@ class MysqlDatabase(BaseDatabase):
     def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
         """查询数据库中的基础信息汇总信息"""
 
-        s: ModelSelect = DbBasicStockData.select()
+        s = DbSymbol.select(DbSymbol, DbStockMeta).join(DbStockMeta).where(
+            (DbSymbol.status == 'active') &
+            (DbSymbol.type == 'CS')
+        ).dicts()
         overviews = {}
-        for overview in s:
-            so = overview.__data__
-            so["exchange"] = Exchange(overview.exchange)
-            market = Market(overview.market)
-            so["market"] = market
-            so["symbol_type"] = "CS"
-            so.pop("id")
-            so.pop("hash_value")
+        for ov in s:
+            ov["exchange"] = Exchange(ov['exchange'])
+            market = Market(ov['market'])
+            ov['market'] = market
             if market not in overviews:
                 overviews[market] = []
-            overviews[market].append(BasicStockData(**so))
+            overviews[market].append(BasicStockData(**ov))
         return overviews
+
+    # def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
+    #     """查询数据库中的基础信息汇总信息"""
+    #
+    #     s: ModelSelect = DbBasicStockData.select()
+    #     overviews = {}
+    #     for overview in s:
+    #         so = overview.__data__
+    #         so["exchange"] = Exchange(overview.exchange)
+    #         market = Market(overview.market)
+    #         so["market"] = market
+    #         so["symbol_type"] = "CS"
+    #         so.pop("id")
+    #         so.pop("hash_value")
+    #         if market not in overviews:
+    #             overviews[market] = []
+    #         overviews[market].append(BasicStockData(**so))
+    #     return overviews
 
     def get_basic_index_data(self) -> Dict[Market, List[BasicIndexData]]:
         """查询数据库中的基础信息汇总信息"""
 
-        s: ModelSelect = DbBasicIndexData.select()
+        s = DbSymbol.select(DbSymbol, DbIndexMeta).join(DbIndexMeta).where(
+            (DbSymbol.status == 'active') &
+            (DbSymbol.type == 'INDX')
+        ).dicts()
         overviews = {}
-        for overview in s:
-            io = overview.__data__
-            io["exchange"] = Exchange(overview.exchange)
-            market = Market(overview.market)
-            io["market"] = market
-            io["symbol_type"] = "INDX"
-            io.pop("id")
+        for ov in s:
+            ov["exchange"] = Exchange(ov['exchange'])
+            market = Market(ov['market'])
+            ov['market'] = market
             if market not in overviews:
                 overviews[market] = []
-            overviews[market].append(BasicIndexData(**io))
+            overviews[market].append(BasicIndexData(**ov))
         return overviews
 
     def get_basic_info_by_symbol(self, symbol, symbol_type: str = 'CS') -> BasicSymbolData:
@@ -968,3 +1194,10 @@ class MysqlDatabase(BaseDatabase):
             basic_data = BasicIndexData(**dc)
 
         return basic_data
+
+    def update_daily_stat_data(self, many_data: List):
+        """更新每日统计数据"""
+        with self.db.atomic():
+            for c in chunked(many_data, 50):
+                # DbDailyStatData.insert_many(c).on_conflict_replace().execute()
+                DbDailyStatData.insert_many(c).on_conflict_ignore().execute()
