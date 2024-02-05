@@ -21,7 +21,7 @@ from peewee import (
 from playhouse.shortcuts import ReconnectMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from vnpy.trader.constant import Exchange, Interval, Market
+from vnpy.trader.constant import Exchange, Interval, Market, Conflict
 from vnpy.trader.object import BarData, TickData
 from vnpy.trader.database import (
     BaseDatabase,
@@ -617,6 +617,19 @@ class DbDailyStatData(Model):
         indexes: tuple = ((("symbol", "interval", "datetime"), True),)
 
 
+# a new model to log operation
+class DbOperation(Model):
+    id = AutoField()
+    op_type: str = CharField(max_length=128, null=False)
+    op_status: str = CharField(max_length=128, null=False)
+    op_time: datetime = DateTimeField()
+    op_info: str = CharField(max_length=128)
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+
+
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
 
@@ -625,9 +638,11 @@ class MysqlDatabase(BaseDatabase):
         self.db: PeeweeMySQLDatabase = db
         self.db.connect()
         self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
-        self.db.create_tables([DbSymbolLists, DbBasicStockData, DbSymbolListMap])
+        self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
+        self.db.create_tables([DbStockCapitalData, DbStockCapitalFlatData])
+        self.db.create_tables([DbUserData, DbOperation, DbBacktestingResults])
 
-    def save_index_bar_data(self, bars: List[BarData], stream: bool = False) -> bool:
+    def save_index_bar_data(self, bars: List[BarData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存Index K线数据"""
         # 读取主键参数
         bar: BarData = bars[0]
@@ -650,8 +665,12 @@ class MysqlDatabase(BaseDatabase):
 
         # 使用upsert操作将数据更新到数据库中
         with self.db.atomic():
-            for c in chunked(data, 50):
-                DbIndexBarData.insert_many(c).on_conflict_replace().execute()
+            if conflict == Conflict.IGNORE:
+                for c in chunked(data, 50):
+                    DbIndexBarData.insert_many(c).on_conflict_ignore().execute()
+            else:
+                for c in chunked(data, 50):
+                    DbIndexBarData.insert_many(c).on_conflict_replace().execute()
 
         # 更新K线汇总数据
         overview: DbBarOverview = DbBarOverview.get_or_none(
@@ -688,7 +707,7 @@ class MysqlDatabase(BaseDatabase):
 
         return True
 
-    def save_bar_data(self, bars: List[BarData], stream: bool = False) -> bool:
+    def save_bar_data(self, bars: List[BarData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存K线数据"""
         # 读取主键参数
         bar: BarData = bars[0]
@@ -711,8 +730,12 @@ class MysqlDatabase(BaseDatabase):
 
         # 使用upsert操作将数据更新到数据库中
         with self.db.atomic():
-            for c in chunked(data, 50):
-                DbBarData.insert_many(c).on_conflict_replace().execute()
+            if conflict == Conflict.IGNORE:
+                for c in chunked(data, 50):
+                    DbBarData.insert_many(c).on_conflict_ignore().execute()
+            else:
+                for c in chunked(data, 50):
+                    DbBarData.insert_many(c).on_conflict_replace().execute()
 
         # 更新K线汇总数据
         overview: DbBarOverview = DbBarOverview.get_or_none(
@@ -749,7 +772,7 @@ class MysqlDatabase(BaseDatabase):
 
         return True
 
-    def save_tick_data(self, ticks: List[TickData], stream: bool = False) -> bool:
+    def save_tick_data(self, ticks: List[TickData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存TICK数据"""
         # 读取主键参数
         tick: TickData = ticks[0]
@@ -770,8 +793,12 @@ class MysqlDatabase(BaseDatabase):
 
         # 使用upsert操作将数据更新到数据库中
         with self.db.atomic():
-            for c in chunked(data, 50):
-                DbTickData.insert_many(c).on_conflict_replace().execute()
+            if conflict == Conflict.IGNORE:
+                for c in chunked(data, 50):
+                    DbTickData.insert_many(c).on_conflict_ignore().execute()
+            else:
+                for c in chunked(data, 50):
+                    DbTickData.insert_many(c).on_conflict_replace().execute()
 
         # 更新Tick汇总数据
         overview: DbTickOverview = DbTickOverview.get_or_none(
@@ -1201,3 +1228,22 @@ class MysqlDatabase(BaseDatabase):
             for c in chunked(many_data, 50):
                 # DbDailyStatData.insert_many(c).on_conflict_replace().execute()
                 DbDailyStatData.insert_many(c).on_conflict_ignore().execute()
+
+    def save_operation_log(self, type: str, op_status: str, op_time: datetime, op_info: str = ""):
+        # 插入新数据
+        operation = DbOperation.create(
+            op_type=type,
+            op_status=op_status,
+            op_time=op_time,
+            op_info=op_info,
+            update_dt=datetime.now()
+        )
+
+        # 保存到数据库
+        operation.save()
+
+    def save_capital_data(self, capital_data: List):
+        DbStockCapitalData.insert_many(capital_data).on_conflict_replace().execute()
+
+    def save_capital_flat_data(self, capital_data: List):
+        DbStockCapitalFlatData.insert_many(capital_data).on_conflict_replace().execute()
