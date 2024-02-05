@@ -1,12 +1,11 @@
-import hashlib
 from datetime import datetime, date
 from typing import List, Dict
 
+import pandas as pd
 from peewee import (
     AutoField,
     CharField,
     DateTimeField,
-    DoubleField,
     IntegerField,
     Model,
     MySQLDatabase as PeeweeMySQLDatabase,
@@ -16,7 +15,7 @@ from peewee import (
     fn,
     DoubleField,
     DateField,
-    BooleanField, BigIntegerField, ForeignKeyField
+    BooleanField, BigIntegerField, ForeignKeyField, SQL
 )
 from playhouse.shortcuts import ReconnectMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -32,12 +31,12 @@ from vnpy.trader.database import (
 )
 from vnpy.trader.setting import SETTINGS
 from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData
-from ex_vnpy.trade_plan import StoplossReason
 
 
 class ReconnectMySQLDatabase(ReconnectMixin, PeeweeMySQLDatabase):
     """带有重连混入的MySQL数据库类"""
     pass
+
 
 db = ReconnectMySQLDatabase(
     database=SETTINGS["database.database"],
@@ -232,6 +231,7 @@ class DbStockMeta(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
+        constraints = [SQL('UNIQUE(symbol)')]  # 添加对symbol的唯一性约束
 
 
 class DbIndexMeta(Model):
@@ -255,100 +255,7 @@ class DbIndexMeta(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-
-
-# TODO: remove
-class DbBasicStockData(Model):
-    """股票列表映射对象"""
-
-    id = AutoField()
-
-    symbol: str = CharField()
-    name: str = CharField()
-    exchange: str = CharField()
-    market: str = CharField()
-
-    shares_total: float = DoubleField(null=True)
-    shares_total_a: float = DoubleField(null=True)
-    shares_circ_a: float = DoubleField(null=True)
-    shares_non_circ_a: float = DoubleField(null=True)
-
-    ex_date: date = DateField(null=True)
-
-    industry_first: str = CharField()
-    industry_second: str = CharField()
-    industry_third: str = CharField()
-    industry_forth: str = CharField()
-
-    industry_code_zz: str = CharField()
-    industry_code: str = CharField(null=True)  # 统计局/证监会行业分类代码，可选
-
-    index_sz50: bool = BooleanField(default=False)  # 默认为0
-    index_hs300: bool = BooleanField(default=False)
-    index_zz500: bool = BooleanField(default=False)
-    index_zz800: bool = BooleanField(default=False)
-    index_zz1000: bool = BooleanField(default=False)
-    index_normal: bool = BooleanField(default=False)
-
-    active: bool = BooleanField(default=True)
-
-    hash_value: str = CharField()  # 对象的hash值
-    update_dt: datetime = DateTimeField()
-
-    class Meta:
-        database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "exchange", "market"), True),)
-
-    def has_changed(self, bs):
-        sf_dict = self.__dict__
-        keys = sf_dict['__data__'].keys()
-        for key in keys:
-            if key not in ['id', 'update_dt']:
-                if getattr(self, key) != getattr(bs, key):
-                    print('change: {}. old: {}, new: {}'.format(key, getattr(self, key), getattr(bs, key)))
-                    return True
-        return False
-
-    @classmethod
-    def get_hash_value(cls, sf_dict):
-        # sf_dict = self.__dict__['__data__']
-        for key in ['id', 'hash_value', 'update_dt']:
-            if key in sf_dict.keys():
-                sf_dict.pop(key)
-        return hashlib.md5(sf_dict.__str__().encode('utf-8')).hexdigest()
-
-    def save(self, *args, **kwargs):
-        sf_dict = self.__dict__['__data__']
-        self.hash_value = DbBasicStockData.get_hash_value(sf_dict)
-        self.update_dt = datetime.now()
-        return super(DbBasicStockData, self).save(*args, **kwargs)
-
-# TODO: remove
-class DbBasicIndexData(Model):
-    """Index列表映射对象"""
-
-    id = AutoField()
-
-    symbol: str = CharField()
-    name: str = CharField()
-    full_name: str = CharField()
-    exchange: str = CharField()
-    market: str = CharField(default='CN')
-
-    volume: int = BigIntegerField(null=True)
-    turnover: int = BigIntegerField(null=True)
-
-    publish_date: date = DateField(null=True)
-    exit_date: date = DateField(null=True)
-    has_price: bool = BooleanField(default=True)
-    has_weight: bool = BooleanField(default=True)
-    has_components: bool = BooleanField(default=True)
-
-    is_core_index: bool = BooleanField(default=False)
-
-    class Meta:
-        database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "exchange", "market"), True),)
+        constraints = [SQL('UNIQUE(symbol)')]  # 添加对symbol的唯一性约束
 
 
 class DbBacktestingResults(Model):
@@ -607,8 +514,8 @@ class DbDailyStatData(Model):
     change_pct_22u: float = DoubleField()
 
     # 以下仅适用于interval=d
-    cont_up_days: float = IntegerField()        # 连续上涨天数
-    cont_max_up_days: float = IntegerField()    # 连续涨停天数，最大连续间断不超过1天
+    cont_up_days: float = IntegerField()  # 连续上涨天数
+    cont_max_up_days: float = IntegerField()  # 连续涨停天数，最大连续间断不超过1天
 
     update_dt: datetime = DateTimeField()
 
@@ -642,7 +549,8 @@ class MysqlDatabase(BaseDatabase):
         self.db.create_tables([DbStockCapitalData, DbStockCapitalFlatData])
         self.db.create_tables([DbUserData, DbOperation, DbBacktestingResults])
 
-    def save_index_bar_data(self, bars: List[BarData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
+    def save_index_bar_data(self, bars: List[BarData], stream: bool = False,
+                            conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存Index K线数据"""
         # 读取主键参数
         bar: BarData = bars[0]
@@ -678,7 +586,7 @@ class MysqlDatabase(BaseDatabase):
             DbBarOverview.exchange == exchange.value,
             DbBarOverview.interval == interval.value,
             DbBarOverview.type == "INDX",
-            )
+        )
 
         if not overview:
             overview: DbBarOverview = DbBarOverview()
@@ -772,7 +680,8 @@ class MysqlDatabase(BaseDatabase):
 
         return True
 
-    def save_tick_data(self, ticks: List[TickData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
+    def save_tick_data(self, ticks: List[TickData], stream: bool = False,
+                       conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存TICK数据"""
         # 读取主键参数
         tick: TickData = ticks[0]
@@ -1014,18 +923,18 @@ class MysqlDatabase(BaseDatabase):
         d2.execute()
         return count
 
-    def get_bar_overview(self, type: str = "CS") -> List[BarOverview]:
+    def get_bar_overview(self, symbol_type: str = "CS") -> List[BarOverview]:
         """查询数据库中的K线汇总信息"""
         # 如果已有K线，但缺失汇总信息，则执行初始化
-        data_count: int = DbBarData.select().count() if type == "CS" else DbIndexBarData.select().count()
-        overview_count: int = DbBarOverview.select().where((DbBarOverview.type == type)).count()
+        data_count: int = DbBarData.select().count() if symbol_type == "CS" else DbIndexBarData.select().count()
+        overview_count: int = DbBarOverview.select().where((DbBarOverview.type == symbol_type)).count()
         if data_count and not overview_count:
-            if type == "CS":
+            if symbol_type == "CS":
                 self.init_bar_overview()
             else:
                 self.init_index_bar_overview()
 
-        s: ModelSelect = DbBarOverview.select().where((DbBarOverview.type == type))
+        s: ModelSelect = DbBarOverview.select().where((DbBarOverview.type == symbol_type))
         overviews: List[BarOverview] = []
         for overview in s:
             overview.exchange = Exchange(overview.exchange)
@@ -1092,6 +1001,7 @@ class MysqlDatabase(BaseDatabase):
             overview.end = end_bar.datetime
 
             overview.save()
+
     def init_index_bar_overview(self) -> None:
         """初始化数据库中的K线汇总信息"""
         s: ModelSelect = (
@@ -1117,25 +1027,25 @@ class MysqlDatabase(BaseDatabase):
 
             start_bar: DbIndexBarData = (
                 DbIndexBarData.select()
-                    .where(
+                .where(
                     (DbIndexBarData.symbol == data.symbol)
                     & (DbIndexBarData.exchange == data.exchange)
                     & (DbIndexBarData.interval == data.interval)
                 )
-                    .order_by(DbIndexBarData.datetime.asc())
-                    .first()
+                .order_by(DbIndexBarData.datetime.asc())
+                .first()
             )
             overview.start = start_bar.datetime
 
             end_bar: DbIndexBarData = (
                 DbIndexBarData.select()
-                    .where(
+                .where(
                     (DbIndexBarData.symbol == data.symbol)
                     & (DbIndexBarData.exchange == data.exchange)
                     & (DbIndexBarData.interval == data.interval)
                 )
-                    .order_by(DbIndexBarData.datetime.desc())
-                    .first()
+                .order_by(DbIndexBarData.datetime.desc())
+                .first()
             )
             overview.end = end_bar.datetime
 
@@ -1158,24 +1068,6 @@ class MysqlDatabase(BaseDatabase):
             overviews[market].append(BasicStockData(**ov))
         return overviews
 
-    # def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
-    #     """查询数据库中的基础信息汇总信息"""
-    #
-    #     s: ModelSelect = DbBasicStockData.select()
-    #     overviews = {}
-    #     for overview in s:
-    #         so = overview.__data__
-    #         so["exchange"] = Exchange(overview.exchange)
-    #         market = Market(overview.market)
-    #         so["market"] = market
-    #         so["symbol_type"] = "CS"
-    #         so.pop("id")
-    #         so.pop("hash_value")
-    #         if market not in overviews:
-    #             overviews[market] = []
-    #         overviews[market].append(BasicStockData(**so))
-    #     return overviews
-
     def get_basic_index_data(self) -> Dict[Market, List[BasicIndexData]]:
         """查询数据库中的基础信息汇总信息"""
 
@@ -1197,42 +1089,55 @@ class MysqlDatabase(BaseDatabase):
         """查询数据库中的基础信息"""
 
         basic_data: BasicSymbolData = None
-        if symbol_type == 'CS':
-            db_data: DbBasicStockData = (
-                DbBasicStockData.select()
-                    .where(DbBasicStockData.symbol == symbol)
-                    .first()
-            )
-            dc = db_data.__data__
-            dc["symbol_type"] = symbol_type
-            for key in ("id", "hash_value"):
-                dc.pop(key)
 
-            basic_data = BasicStockData(**dc)
-        elif symbol_type == 'INDX':
-            db_data: DbBasicIndexData = (
-                DbBasicIndexData.select()
-                .where(DbBasicIndexData.symbol == symbol)
+        if symbol_type == 'CS':
+            dc = (
+                DbSymbol.select(DbSymbol, DbStockMeta)
+                .join(DbStockMeta)
+                .where(
+                    (DbSymbol.status == 'active') &
+                    (DbSymbol.type == 'CS') &
+                    (DbSymbol.symbol == symbol))
+                .dicts()
                 .first()
             )
-            dc = db_data.__data__
-            dc.pop("id")
-            dc["symbol_type"] = symbol_type
+
+            dc["exchange"] = Exchange(dc['exchange'])
+            dc["market"] = Market(dc['market'])
+            basic_data = BasicStockData(**dc)
+
+        elif symbol_type == 'INDX':
+            dc = (
+                DbSymbol.select(DbSymbol, DbIndexMeta)
+                .join(DbIndexMeta)
+                .where(
+                    (DbSymbol.status == 'active') &
+                    (DbSymbol.type == 'CS') &
+                    (DbSymbol.symbol == symbol)
+                )
+                .dicts()
+                .first()
+            )
+            dc["exchange"] = Exchange(dc['exchange'])
+            dc["market"] = Market(dc['market'])
             basic_data = BasicIndexData(**dc)
 
         return basic_data
 
-    def update_daily_stat_data(self, many_data: List):
+    def update_daily_stat_data(self, many_data: List, conflict: Conflict = Conflict.IGNORE):
         """更新每日统计数据"""
         with self.db.atomic():
-            for c in chunked(many_data, 50):
-                # DbDailyStatData.insert_many(c).on_conflict_replace().execute()
-                DbDailyStatData.insert_many(c).on_conflict_ignore().execute()
+            if conflict == Conflict.IGNORE:
+                for c in chunked(many_data, 50):
+                    DbDailyStatData.insert_many(c).on_conflict_ignore().execute()
+            else:
+                for c in chunked(many_data, 50):
+                    DbDailyStatData.insert_many(c).on_conflict_replace().execute()
 
-    def save_operation_log(self, type: str, op_status: str, op_time: datetime, op_info: str = ""):
+    def save_operation_log(self, op_type: str, op_status: str, op_time: datetime, op_info: str = ""):
         # 插入新数据
         operation = DbOperation.create(
-            op_type=type,
+            op_type=op_type,
             op_status=op_status,
             op_time=op_time,
             op_info=op_info,
@@ -1247,3 +1152,31 @@ class MysqlDatabase(BaseDatabase):
 
     def save_capital_flat_data(self, capital_data: List):
         DbStockCapitalFlatData.insert_many(capital_data).on_conflict_replace().execute()
+
+    def update_stocks_meta_data(self, stocks_df, market):
+        # 第一部分：更新或插入数据
+        symbols_dict = stocks_df[['symbol', 'name', 'exchange', 'market', 'type', 'status', 'update_dt']].to_dict('records')
+        DbSymbol.insert_many(symbols_dict).on_conflict(
+            preserve=[DbSymbol.name, DbSymbol.status, DbSymbol.update_dt]
+        ).execute()
+
+        symbols = stocks_df['symbol'].to_list()
+
+        # 查询这些symbol的当前状态，包括它们的ID
+        db_symbols = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where((DbSymbol.symbol.in_(symbols)) & (DbSymbol.type == 'CS')).dicts()
+        # convert db_symbols to dataframe and merge stocks_df
+        db_symbols_df = pd.DataFrame(db_symbols)
+        stocks_data = pd.merge(stocks_df, db_symbols_df, on='symbol', how='left')
+        meta_df = stocks_data.drop(['symbol', 'name', 'exchange', 'market', 'type', 'status', 'shares_circ_a', 'shares_non_circ_a', 'shares_total_a', 'shares_total'], axis=1)
+        meta_dict = meta_df.rename(columns={'id': 'symbol_id'}).to_dict('records')
+
+        preserve_fields = [field for field in DbStockMeta._meta.fields.keys() if field not in ['id', 'symbol', 'symbol_id']]
+        DbStockMeta.insert_many(meta_dict).on_conflict(preserve=preserve_fields).execute()
+
+        # 第二部分：更新未包含在列表中的DbSymbol的状态
+        query = DbSymbol.update(status='inactive').where(
+            (DbSymbol.symbol.not_in(symbols)) &
+            (DbSymbol.market == market) &
+            (DbSymbol.type == 'CS')
+        )
+        query.execute()
