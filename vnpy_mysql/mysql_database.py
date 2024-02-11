@@ -1051,6 +1051,13 @@ class MysqlDatabase(BaseDatabase):
 
             overview.save()
 
+    def get_symbol_ids(self, s_type: str, market: Market) -> Dict[str, int]:
+        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where((DbSymbol.type == s_type) & (DbSymbol.market == market.value)).dicts()
+        id_maps = {}
+        for d in s:
+            id_maps[d["symbol"]] = d["id"]
+        return id_maps
+
     def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
         """查询数据库中的基础信息汇总信息"""
 
@@ -1085,44 +1092,45 @@ class MysqlDatabase(BaseDatabase):
             overviews[market].append(BasicIndexData(**ov))
         return overviews
 
-    def get_basic_info_by_symbol(self, symbol, symbol_type: str = 'CS') -> BasicSymbolData:
+    def get_basic_info_by_symbols(self, symbols, market: Market = Market.CN, symbol_type: str = 'CS') -> List[BasicSymbolData]:
         """查询数据库中的基础信息"""
 
-        basic_data: BasicSymbolData = None
+        basic_datas: List[BasicSymbolData] = []
 
         if symbol_type == 'CS':
-            dc = (
+            stocks = (
                 DbSymbol.select(DbSymbol, DbStockMeta)
                 .join(DbStockMeta)
                 .where(
                     (DbSymbol.status == 'active') &
-                    (DbSymbol.type == 'CS') &
-                    (DbSymbol.symbol == symbol))
+                    (DbSymbol.market == market.value) &
+                    (DbSymbol.type == symbol_type) &
+                    (DbSymbol.symbol.in_(symbols)))
                 .dicts()
-                .first()
             )
 
-            dc["exchange"] = Exchange(dc['exchange'])
-            dc["market"] = Market(dc['market'])
-            basic_data = BasicStockData(**dc)
+            for dc in stocks:
+                dc["exchange"] = Exchange(dc['exchange'])
+                dc["market"] = Market(dc['market'])
+                basic_datas.append(BasicStockData(**dc))
 
         elif symbol_type == 'INDX':
-            dc = (
+            indexes = (
                 DbSymbol.select(DbSymbol, DbIndexMeta)
                 .join(DbIndexMeta)
                 .where(
                     (DbSymbol.status == 'active') &
-                    (DbSymbol.type == 'CS') &
-                    (DbSymbol.symbol == symbol)
-                )
+                    (DbSymbol.market == market.value) &
+                    (DbSymbol.type == symbol_type) &
+                    (DbSymbol.symbol.in_(symbols)))
                 .dicts()
-                .first()
             )
-            dc["exchange"] = Exchange(dc['exchange'])
-            dc["market"] = Market(dc['market'])
-            basic_data = BasicIndexData(**dc)
+            for dc in indexes:
+                dc["exchange"] = Exchange(dc['exchange'])
+                dc["market"] = Market(dc['market'])
+                basic_datas.append(BasicIndexData(**dc))
 
-        return basic_data
+        return basic_datas
 
     def update_daily_stat_data(self, many_data: List, conflict: Conflict = Conflict.IGNORE):
         """更新每日统计数据"""
@@ -1153,7 +1161,7 @@ class MysqlDatabase(BaseDatabase):
     def save_capital_flat_data(self, capital_data: List):
         DbStockCapitalFlatData.insert_many(capital_data).on_conflict_replace().execute()
 
-    def update_stocks_meta_data(self, stocks_df, market):
+    def update_stocks_meta_data(self, stocks_df, market: Market):
         # 第一部分：更新或插入数据
         symbols_dict = stocks_df[['symbol', 'name', 'exchange', 'market', 'type', 'status', 'update_dt']].to_dict('records')
         DbSymbol.insert_many(symbols_dict).on_conflict(
@@ -1163,7 +1171,12 @@ class MysqlDatabase(BaseDatabase):
         symbols = stocks_df['symbol'].to_list()
 
         # 查询这些symbol的当前状态，包括它们的ID
-        db_symbols = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where((DbSymbol.symbol.in_(symbols)) & (DbSymbol.type == 'CS')).dicts()
+        db_symbols = (DbSymbol.select(DbSymbol.id, DbSymbol.symbol)
+                      .where((DbSymbol.symbol.in_(symbols)) &
+                             (DbSymbol.type == 'CS') &
+                             (DbSymbol.market == market.value)
+                             )
+                      .dicts())
         # convert db_symbols to dataframe and merge stocks_df
         db_symbols_df = pd.DataFrame(db_symbols)
         stocks_data = pd.merge(stocks_df, db_symbols_df, on='symbol', how='left')
@@ -1176,7 +1189,7 @@ class MysqlDatabase(BaseDatabase):
         # 第二部分：更新未包含在列表中的DbSymbol的状态
         query = DbSymbol.update(status='inactive').where(
             (DbSymbol.symbol.not_in(symbols)) &
-            (DbSymbol.market == market) &
+            (DbSymbol.market == market.value) &
             (DbSymbol.type == 'CS')
         )
         query.execute()
