@@ -231,7 +231,7 @@ class DbStockMeta(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        constraints = [SQL('UNIQUE(symbol)')]  # 添加对symbol的唯一性约束
+        constraints = [SQL('UNIQUE(symbol_id)')]  # 添加对symbol的唯一性约束
 
 
 class DbIndexMeta(Model):
@@ -388,7 +388,6 @@ class DbStockCapitalData(Model):
 
 
 class DbStockCapitalFlatData(Model):
-    """股票列表映射对象"""
 
     id = AutoField()
 
@@ -432,6 +431,24 @@ class DbStockCapitalFlatData(Model):
     class Meta:
         database: PeeweeMySQLDatabase = db
         indexes = ((("symbol", "date", "interval", "type"), True),)
+
+
+class DbCapitalOverview(Model):
+    """Level2汇总数据表映射对象"""
+
+    id: AutoField = AutoField()
+
+    symbol = ForeignKeyField(DbSymbol, backref='capital_overview', verbose_name="股票基础信息")
+    interval: str = CharField()
+    count: int = IntegerField()
+    start: date = DateField()
+    end: date = DateField()
+
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol_id", "interval"), True),)
 
 
 class DbUserData(Model):
@@ -546,7 +563,7 @@ class MysqlDatabase(BaseDatabase):
         self.db.connect()
         self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
-        self.db.create_tables([DbStockCapitalData, DbStockCapitalFlatData])
+        self.db.create_tables([DbCapitalOverview, DbStockCapitalData, DbStockCapitalFlatData])
         self.db.create_tables([DbUserData, DbOperation, DbBacktestingResults])
 
     def save_index_bar_data(self, bars: List[BarData], stream: bool = False,
@@ -1193,3 +1210,19 @@ class MysqlDatabase(BaseDatabase):
             (DbSymbol.type == 'CS')
         )
         query.execute()
+
+    def get_capital_days(self, start_date: date, end_date: date) -> List[str]:
+        # 查询并去重
+        query = (DbStockCapitalFlatData
+                 .select(DbStockCapitalFlatData.date)
+                 .where((DbStockCapitalFlatData.date >= start_date) &
+                        (DbStockCapitalFlatData.date < end_date) &
+                        (DbStockCapitalFlatData.interval == 'd') &
+                        (DbStockCapitalFlatData.type == 'CS'))
+                 .group_by(DbStockCapitalFlatData.date)
+                 .order_by(DbStockCapitalFlatData.date))
+
+        # 提取日部分，并格式化为 dd 格式
+        days_dd = [record.date.strftime('%d') for record in query]
+
+        return days_dd
