@@ -388,7 +388,6 @@ class DbStockCapitalData(Model):
 
 
 class DbStockCapitalFlatData(Model):
-
     id = AutoField()
 
     symbol: str = CharField(max_length=32)
@@ -1069,7 +1068,8 @@ class MysqlDatabase(BaseDatabase):
             overview.save()
 
     def get_symbol_ids(self, s_type: str, market: Market) -> Dict[str, int]:
-        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where((DbSymbol.type == s_type) & (DbSymbol.market == market.value)).dicts()
+        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where(
+            (DbSymbol.type == s_type) & (DbSymbol.market == market.value)).dicts()
         id_maps = {}
         for d in s:
             id_maps[d["symbol"]] = d["id"]
@@ -1109,7 +1109,8 @@ class MysqlDatabase(BaseDatabase):
             overviews[market].append(BasicIndexData(**ov))
         return overviews
 
-    def get_basic_info_by_symbols(self, symbols, market: Market = Market.CN, symbol_type: str = 'CS') -> List[BasicSymbolData]:
+    def get_basic_info_by_symbols(self, symbols, market: Market = Market.CN, symbol_type: str = 'CS') -> List[
+        BasicSymbolData]:
         """查询数据库中的基础信息"""
 
         basic_datas: List[BasicSymbolData] = []
@@ -1180,7 +1181,8 @@ class MysqlDatabase(BaseDatabase):
 
     def update_stocks_meta_data(self, stocks_df, market: Market):
         # 第一部分：更新或插入数据
-        symbols_dict = stocks_df[['symbol', 'name', 'exchange', 'market', 'type', 'status', 'update_dt']].to_dict('records')
+        symbols_dict = stocks_df[['symbol', 'name', 'exchange', 'market', 'type', 'status', 'update_dt']].to_dict(
+            'records')
         DbSymbol.insert_many(symbols_dict).on_conflict(
             preserve=[DbSymbol.name, DbSymbol.status, DbSymbol.update_dt]
         ).execute()
@@ -1197,10 +1199,13 @@ class MysqlDatabase(BaseDatabase):
         # convert db_symbols to dataframe and merge stocks_df
         db_symbols_df = pd.DataFrame(db_symbols)
         stocks_data = pd.merge(stocks_df, db_symbols_df, on='symbol', how='left')
-        meta_df = stocks_data.drop(['symbol', 'name', 'exchange', 'market', 'type', 'status', 'shares_circ_a', 'shares_non_circ_a', 'shares_total_a', 'shares_total'], axis=1)
+        meta_df = stocks_data.drop(
+            ['symbol', 'name', 'exchange', 'market', 'type', 'status', 'shares_circ_a', 'shares_non_circ_a',
+             'shares_total_a', 'shares_total'], axis=1)
         meta_dict = meta_df.rename(columns={'id': 'symbol_id'}).to_dict('records')
 
-        preserve_fields = [field for field in DbStockMeta._meta.fields.keys() if field not in ['id', 'symbol', 'symbol_id']]
+        preserve_fields = [field for field in DbStockMeta._meta.fields.keys() if
+                           field not in ['id', 'symbol', 'symbol_id']]
         DbStockMeta.insert_many(meta_dict).on_conflict(preserve=preserve_fields).execute()
 
         # 第二部分：更新未包含在列表中的DbSymbol的状态
@@ -1226,3 +1231,10 @@ class MysqlDatabase(BaseDatabase):
         days_dd = [record.date.strftime('%d') for record in query]
 
         return days_dd
+
+    def get_latest_statistic_date(self):
+        latest = (DbDailyStatData.select()
+                     .where(DbDailyStatData.interval == 'd')
+                     .order_by(DbDailyStatData.datetime.desc())
+                     .first())
+        return datetime.fromtimestamp(latest.datetime.timestamp(), DB_TZ)
