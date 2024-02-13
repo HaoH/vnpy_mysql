@@ -1238,3 +1238,10 @@ class MysqlDatabase(BaseDatabase):
                      .order_by(DbDailyStatData.datetime.desc())
                      .first())
         return datetime.fromtimestamp(latest.datetime.timestamp(), DB_TZ)
+
+    def get_latest_op_info(self, op_type):
+        latest = (DbOperation.select().where((DbOperation.op_type == op_type) &
+                    (DbOperation.op_status == 'success'))
+                  .order_by(DbOperation.op_time.desc())
+                  .first())
+        return latest
