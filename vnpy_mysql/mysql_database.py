@@ -15,7 +15,7 @@ from peewee import (
     fn,
     DoubleField,
     DateField,
-    BooleanField, BigIntegerField, ForeignKeyField, SQL
+    BooleanField, BigIntegerField, ForeignKeyField, SQL, FloatField
 )
 from playhouse.shortcuts import ReconnectMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -386,6 +386,29 @@ class DbStockCapitalData(Model):
         database: PeeweeMySQLDatabase = db
         indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
 
+class DbStockCapitalDataNew(Model):
+    """股票列表映射对象"""
+
+    id = AutoField()
+
+    symbol: str = CharField(max_length=32)
+    # symbol = ForeignKeyField(DbSymbol, backref='capital', verbose_name="股票基础信息")
+    symbol_id: int = IntegerField(null=True)
+    date: date = DateField()
+    level: str = CharField(max_length=2)
+    direction: str = CharField(max_length=1)
+    trade_time: str = CharField(max_length=4)
+    time_interval: str = CharField(max_length=2)
+    role: str = CharField(max_length=1)
+    order_count: int = IntegerField()
+    order_volume: int = IntegerField()
+    turnover: float = FloatField()
+    volume: int = IntegerField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
+
 
 class DbStockCapitalFlatData(Model):
     id = AutoField()
@@ -431,6 +454,49 @@ class DbStockCapitalFlatData(Model):
         database: PeeweeMySQLDatabase = db
         indexes = ((("symbol", "date", "interval", "type"), True),)
 
+class DbStockCapitalFlatDataNew(Model):
+    id = AutoField()
+
+    symbol: str = CharField(max_length=32)
+    symbol_id: int = IntegerField(null=True)
+    datetime: datetime = DateTimeField()
+    interval: str = CharField(max_length=8)
+    order_count_buy_XL: int = IntegerField()
+    order_count_buy_L: int = IntegerField()
+    order_count_buy_M: int = IntegerField()
+    order_count_buy_S: int = IntegerField()
+    order_count_sale_XL: int = IntegerField()
+    order_count_sale_L: int = IntegerField()
+    order_count_sale_M: int = IntegerField()
+    order_count_sale_S: int = IntegerField()
+    order_volume_buy_XL: int = IntegerField()
+    order_volume_buy_L: int = IntegerField()
+    order_volume_buy_M: int = IntegerField()
+    order_volume_buy_S: int = IntegerField()
+    order_volume_sale_XL: int = IntegerField()
+    order_volume_sale_L: int = IntegerField()
+    order_volume_sale_M: int = IntegerField()
+    order_volume_sale_S: int = IntegerField()
+    turnover_buy_XL: int = IntegerField()
+    turnover_buy_L: int = IntegerField()
+    turnover_buy_M: int = IntegerField()
+    turnover_buy_S: int = IntegerField()
+    turnover_sale_XL: int = IntegerField()
+    turnover_sale_L: int = IntegerField()
+    turnover_sale_M: int = IntegerField()
+    turnover_sale_S: int = IntegerField()
+    volume_buy_XL: int = IntegerField()
+    volume_buy_L: int = IntegerField()
+    volume_buy_M: int = IntegerField()
+    volume_buy_S: int = IntegerField()
+    volume_sale_XL: int = IntegerField()
+    volume_sale_L: int = IntegerField()
+    volume_sale_M: int = IntegerField()
+    volume_sale_S: int = IntegerField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "datetime", "interval"), True),)
 
 class DbCapitalOverview(Model):
     """Level2汇总数据表映射对象"""
@@ -553,6 +619,24 @@ class DbOperation(Model):
         database: PeeweeMySQLDatabase = db
 
 
+class DbAliyunBinlogFiles(Model):
+    id = AutoField()
+
+    binlog_file: str = CharField(max_length=128, null=False)
+    file_size: int = IntegerField()
+    remote_status: str = CharField(max_length=128, null=False, default='Completed')
+    local_status: str = CharField(max_length=128, null=False, default='New')
+    download_link: str = CharField(max_length=2048, null=False)
+    log_start_time: datetime = DateTimeField()
+    log_end_time: datetime = DateTimeField()
+    link_expire_time: datetime = DateTimeField()
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("binlog_file", "remote_status"), True),)
+
+
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
 
@@ -563,7 +647,7 @@ class MysqlDatabase(BaseDatabase):
         self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
         self.db.create_tables([DbCapitalOverview, DbStockCapitalData, DbStockCapitalFlatData])
-        self.db.create_tables([DbUserData, DbOperation, DbBacktestingResults])
+        self.db.create_tables([DbUserData, DbOperation, DbAliyunBinlogFiles, DbBacktestingResults])
 
     def save_index_bar_data(self, bars: List[BarData], stream: bool = False,
                             conflict: Conflict = Conflict.REPLACE) -> bool:
@@ -1167,7 +1251,7 @@ class MysqlDatabase(BaseDatabase):
             op_status=op_status,
             op_time=op_time,
             op_info=op_info,
-            update_dt=datetime.now()
+            update_dt=datetime.now(DB_TZ)
         )
 
         # 保存到数据库
@@ -1245,3 +1329,15 @@ class MysqlDatabase(BaseDatabase):
                   .order_by(DbOperation.op_time.desc())
                   .first())
         return latest
+
+    def update_aliyun_binlog_files(self, binlog_files: List):
+        DbAliyunBinlogFiles.insert_many(binlog_files).on_conflict_ignore().execute()
+
+    def get_new_binlog_files(self) -> List:
+        query = (DbAliyunBinlogFiles
+                 .select()
+                 .where((DbAliyunBinlogFiles.local_status == 'New') &
+                        (DbAliyunBinlogFiles.remote_status == 'Completed'))
+                 .order_by(DbAliyunBinlogFiles.log_start_time))
+
+        return query
