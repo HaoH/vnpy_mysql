@@ -392,13 +392,13 @@ class DbStockCapitalDataNew(Model):
     id = AutoField()
 
     symbol: str = CharField(max_length=32)
-    # symbol = ForeignKeyField(DbSymbol, backref='capital', verbose_name="股票基础信息")
-    symbol_id: int = IntegerField(null=True)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='capital', verbose_name="股票基础信息")
+    # symbol_id: int = IntegerField(null=True)
     date: date = DateField()
     level: str = CharField(max_length=2)
     direction: str = CharField(max_length=1)
     trade_time: str = CharField(max_length=4)
-    time_interval: str = CharField(max_length=2)
+    interval: str = CharField(max_length=2)
     role: str = CharField(max_length=1)
     order_count: int = IntegerField()
     order_volume: int = IntegerField()
@@ -458,41 +458,42 @@ class DbStockCapitalFlatDataNew(Model):
     id = AutoField()
 
     symbol: str = CharField(max_length=32)
-    symbol_id: int = IntegerField(null=True)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='capital_flat', verbose_name="股票基础信息")
+    # symbol_id: int = IntegerField(null=True)
     datetime: datetime = DateTimeField()
     interval: str = CharField(max_length=8)
     order_count_buy_XL: int = IntegerField()
     order_count_buy_L: int = IntegerField()
     order_count_buy_M: int = IntegerField()
     order_count_buy_S: int = IntegerField()
-    order_count_sale_XL: int = IntegerField()
-    order_count_sale_L: int = IntegerField()
-    order_count_sale_M: int = IntegerField()
-    order_count_sale_S: int = IntegerField()
+    order_count_sell_XL: int = IntegerField()
+    order_count_sell_L: int = IntegerField()
+    order_count_sell_M: int = IntegerField()
+    order_count_sell_S: int = IntegerField()
     order_volume_buy_XL: int = IntegerField()
     order_volume_buy_L: int = IntegerField()
     order_volume_buy_M: int = IntegerField()
     order_volume_buy_S: int = IntegerField()
-    order_volume_sale_XL: int = IntegerField()
-    order_volume_sale_L: int = IntegerField()
-    order_volume_sale_M: int = IntegerField()
-    order_volume_sale_S: int = IntegerField()
+    order_volume_sell_XL: int = IntegerField()
+    order_volume_sell_L: int = IntegerField()
+    order_volume_sell_M: int = IntegerField()
+    order_volume_sell_S: int = IntegerField()
     turnover_buy_XL: int = IntegerField()
     turnover_buy_L: int = IntegerField()
     turnover_buy_M: int = IntegerField()
     turnover_buy_S: int = IntegerField()
-    turnover_sale_XL: int = IntegerField()
-    turnover_sale_L: int = IntegerField()
-    turnover_sale_M: int = IntegerField()
-    turnover_sale_S: int = IntegerField()
+    turnover_sell_XL: int = IntegerField()
+    turnover_sell_L: int = IntegerField()
+    turnover_sell_M: int = IntegerField()
+    turnover_sell_S: int = IntegerField()
     volume_buy_XL: int = IntegerField()
     volume_buy_L: int = IntegerField()
     volume_buy_M: int = IntegerField()
     volume_buy_S: int = IntegerField()
-    volume_sale_XL: int = IntegerField()
-    volume_sale_L: int = IntegerField()
-    volume_sale_M: int = IntegerField()
-    volume_sale_S: int = IntegerField()
+    volume_sell_XL: int = IntegerField()
+    volume_sell_L: int = IntegerField()
+    volume_sell_M: int = IntegerField()
+    volume_sell_S: int = IntegerField()
 
     class Meta:
         database: PeeweeMySQLDatabase = db
@@ -646,7 +647,7 @@ class MysqlDatabase(BaseDatabase):
         self.db.connect()
         self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
-        self.db.create_tables([DbCapitalOverview, DbStockCapitalData, DbStockCapitalFlatData])
+        self.db.create_tables([DbStockCapitalDataNew, DbStockCapitalFlatDataNew])
         self.db.create_tables([DbUserData, DbOperation, DbAliyunBinlogFiles, DbBacktestingResults])
 
     def save_index_bar_data(self, bars: List[BarData], stream: bool = False,
@@ -1257,11 +1258,15 @@ class MysqlDatabase(BaseDatabase):
         # 保存到数据库
         operation.save()
 
-    def save_capital_data(self, capital_data: List):
-        DbStockCapitalData.insert_many(capital_data).on_conflict_replace().execute()
+    def save_capital_data(self, data: List):
+        with self.db.atomic():
+            for c in chunked(data, 1000):
+                DbStockCapitalDataNew.insert_many(c).on_conflict_replace().execute()
 
-    def save_capital_flat_data(self, capital_data: List):
-        DbStockCapitalFlatData.insert_many(capital_data).on_conflict_replace().execute()
+    def save_capital_flat_data(self, data: List):
+        with self.db.atomic():
+            for c in chunked(data, 1000):
+                DbStockCapitalFlatDataNew.insert_many(c).on_conflict_replace().execute()
 
     def update_stocks_meta_data(self, stocks_df, market: Market):
         # 第一部分：更新或插入数据
@@ -1300,19 +1305,18 @@ class MysqlDatabase(BaseDatabase):
         )
         query.execute()
 
-    def get_capital_days(self, start_date: date, end_date: date) -> List[str]:
+    def get_capital_days(self, start_date: datetime, end_date: datetime) -> List[str]:
         # 查询并去重
-        query = (DbStockCapitalFlatData
-                 .select(DbStockCapitalFlatData.date)
-                 .where((DbStockCapitalFlatData.date >= start_date) &
-                        (DbStockCapitalFlatData.date < end_date) &
-                        (DbStockCapitalFlatData.interval == 'd') &
-                        (DbStockCapitalFlatData.type == 'CS'))
-                 .group_by(DbStockCapitalFlatData.date)
-                 .order_by(DbStockCapitalFlatData.date))
+        query = (DbStockCapitalFlatDataNew
+                 .select(DbStockCapitalFlatDataNew.datetime)
+                 .where((DbStockCapitalFlatDataNew.datetime >= start_date) &
+                        (DbStockCapitalFlatDataNew.datetime < end_date) &
+                        (DbStockCapitalFlatDataNew.interval == 'd'))
+                 .group_by(DbStockCapitalFlatDataNew.datetime)
+                 .order_by(DbStockCapitalFlatDataNew.datetime))
 
         # 提取日部分，并格式化为 dd 格式
-        days_dd = [record.date.strftime('%d') for record in query]
+        days_dd = [record.datetime.strftime('%d') for record in query]
 
         return days_dd
 
@@ -1341,3 +1345,11 @@ class MysqlDatabase(BaseDatabase):
                  .order_by(DbAliyunBinlogFiles.log_start_time))
 
         return query
+
+    def get_capital_data_by_month(self, month_str) -> List:
+        query = (DbStockCapitalDataNew
+                 .select(DbStockCapitalDataNew, DbStockCapitalDataNew.symbol_meta.alias('symbol_id'))
+                 .where(fn.DATE_FORMAT(DbStockCapitalDataNew.date, '%Y%m') == month_str)
+                 .order_by(DbStockCapitalDataNew.symbol)
+                 .dicts())
+        return list(query)
