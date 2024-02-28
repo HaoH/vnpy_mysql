@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import pandas as pd
 from peewee import (
@@ -15,7 +15,7 @@ from peewee import (
     fn,
     DoubleField,
     DateField,
-    BooleanField, BigIntegerField, ForeignKeyField, SQL, FloatField
+    BooleanField, BigIntegerField, ForeignKeyField, SQL, FloatField, FixedCharField
 )
 from playhouse.shortcuts import ReconnectMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -55,15 +55,36 @@ class DateTimeMillisecondField(DateTimeField):
         return [3]
 
 
+class DbSymbol(Model):
+    """股票、指数、基金等各投资品列表映射对象"""
+
+    id = AutoField()
+    symbol: str = CharField(max_length=32, null=False)
+    name: str = CharField(max_length=128, null=False)
+    exchange: str = CharField(max_length=8, null=False)
+    market: str = FixedCharField(max_length=2, null=False, default='CN')
+    type: str = CharField(max_length=8, null=False, default='CS')
+    status: str = CharField(max_length=8, null=False, default='active')
+    update_dt: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = ((("symbol", "exchange"), True),
+                   (("market", "symbol", "name"), False),
+                   (("status"), False),
+                   (("type"), False),)
+
+
+# TODO: replace it by DbBarDataNew, not to delete it directly
 class DbBarData(Model):
     """K线数据表映射对象"""
 
     id: AutoField = AutoField()
 
-    symbol: str = CharField()
-    exchange: str = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    exchange: str = CharField(max_length=8, null=False)
     datetime: datetime = DateTimeField()
-    interval: str = CharField()
+    interval: str = FixedCharField(max_length=3)
 
     volume: float = DoubleField()
     turnover: float = DoubleField()
@@ -78,27 +99,27 @@ class DbBarData(Model):
         indexes: tuple = ((("symbol", "exchange", "interval", "datetime"), True),)
 
 
-class DbIndexBarData(Model):
-    """指数的K线数据表映射对象"""
+class DbBarDataNew(Model):
+    """K线数据表映射对象"""
 
     id: AutoField = AutoField()
 
-    symbol: str = CharField()
-    exchange: str = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='kdata', verbose_name="ohlcv")
     datetime: datetime = DateTimeField()
-    interval: str = CharField()
+    interval: str = FixedCharField(max_length=3, null=False)
 
     volume: float = DoubleField()
     turnover: float = DoubleField()
     open_interest: float = DoubleField()
-    open_price: float = DoubleField()
-    high_price: float = DoubleField()
-    low_price: float = DoubleField()
-    close_price: float = DoubleField()
+    open: float = DoubleField()
+    high: float = DoubleField()
+    low: float = DoubleField()
+    close: float = DoubleField()
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes: tuple = ((("symbol", "exchange", "interval", "datetime"), True),)
+        indexes: tuple = ((("symbol_id", "interval", "datetime"), True),)
 
 
 class DbTickData(Model):
@@ -106,11 +127,11 @@ class DbTickData(Model):
 
     id: AutoField = AutoField()
 
-    symbol: str = CharField()
-    exchange: str = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    exchange: str = CharField(max_length=8, null=False)
     datetime: datetime = DateTimeMillisecondField()
 
-    name: str = CharField()
+    name: str = CharField(max_length=128, null=False)
     volume: float = DoubleField()
     turnover: float = DoubleField()
     open_interest: float = DoubleField()
@@ -155,15 +176,16 @@ class DbTickData(Model):
         indexes: tuple = ((("symbol", "exchange", "datetime"), True),)
 
 
+# TODO: replace it with DbBarOverviewNew
 class DbBarOverview(Model):
     """K线汇总数据表映射对象"""
 
     id: AutoField = AutoField()
 
-    symbol: str = CharField()
-    exchange: str = CharField()
-    interval: str = CharField()
-    type: int = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    exchange: str = CharField(max_length=8, null=False)
+    interval: str = FixedCharField(max_length=3)
+    type: str = CharField(max_length=8, null=False, default='CS')
     count: int = IntegerField()
     start: datetime = DateTimeField()
     end: datetime = DateTimeField()
@@ -173,13 +195,29 @@ class DbBarOverview(Model):
         indexes: tuple = ((("symbol", "exchange", "interval", "type"), True),)
 
 
+class DbBarOverviewNew(Model):
+    """K线汇总数据表映射对象"""
+
+    id: AutoField = AutoField()
+    symbol: str = CharField(max_length=32, null=False)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='overviews', verbose_name="证券基础信息")
+    interval: str = FixedCharField(max_length=3, null=False)
+    count: int = IntegerField()
+    start: datetime = DateTimeField()
+    end: datetime = DateTimeField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes: tuple = ((("symbol_id", "interval"), True),)
+
+
 class DbTickOverview(Model):
     """Tick汇总数据表映射对象"""
 
     id: AutoField = AutoField()
 
-    symbol: str = CharField()
-    exchange: str = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    exchange: str = CharField(max_length=8, null=False)
     count: int = IntegerField()
     start: datetime = DateTimeField()
     end: datetime = DateTimeField()
@@ -187,23 +225,6 @@ class DbTickOverview(Model):
     class Meta:
         database: PeeweeMySQLDatabase = db
         indexes: tuple = ((("symbol", "exchange"), True),)
-
-
-class DbSymbol(Model):
-    """股票、指数、基金等各投资品列表映射对象"""
-
-    id = AutoField()
-    symbol: str = CharField(null=False)
-    name: str = CharField(null=False)
-    exchange: str = CharField(null=False)
-    market: str = CharField(null=False, default='CN')
-    type: str = CharField(null=False, default='CS')
-    status: str = CharField(null=False, default='active')
-    update_dt: datetime = DateTimeField()
-
-    class Meta:
-        database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "exchange", "market", "type"), True),)
 
 
 class DbStockMeta(Model):
@@ -258,6 +279,7 @@ class DbIndexMeta(Model):
         constraints = [SQL('UNIQUE(symbol)')]  # 添加对symbol的唯一性约束
 
 
+# TODO: add foreign key symbo_meta
 class DbBacktestingResults(Model):
     """股票回测结果
 ALTER TABLE dbbacktestingresults add has_sl_HALow INT;
@@ -270,10 +292,10 @@ ALTER TABLE dbbacktestingresults MODIFY COLUMN do_sl_HALow INT NOT NULL;
     """
 
     id = AutoField()
-    symbol: str = CharField()
-    name: str = CharField()
-    exchange: str = CharField()
-    market: str = CharField()
+    symbol: str = CharField(max_length=32, null=False)
+    name: str = CharField(max_length=128, null=False)
+    exchange: str = CharField(max_length=8, null=False)
+    market: str = FixedCharField(max_length=2, null=False, default='CN')
 
     backtesting_dt: date = DateField()
     update_dt: datetime = DateTimeField()
@@ -364,28 +386,6 @@ ALTER TABLE dbbacktestingresults MODIFY COLUMN do_sl_HALow INT NOT NULL;
         return super(DbBacktestingResults, self).save(*args, **kwargs)
 
 
-class DbStockCapitalData(Model):
-    """股票列表映射对象"""
-
-    id = AutoField()
-
-    symbol: str = CharField(max_length=32)
-    date: date = DateField()
-    level: str = CharField(max_length=32)
-    role: str = CharField(max_length=16)
-    trade_time: str = CharField(max_length=8)
-    direction: str = CharField(max_length=8)
-    interval: str = CharField(max_length=8)
-    type: str = CharField(max_length=8)
-    order_count: int = IntegerField()
-    order_volume: int = IntegerField()
-    turnover: float = DoubleField()
-    volume: int = IntegerField()
-
-    class Meta:
-        database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
-
 class DbStockCapitalDataNew(Model):
     """股票列表映射对象"""
 
@@ -395,11 +395,11 @@ class DbStockCapitalDataNew(Model):
     symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='capital', verbose_name="股票基础信息")
     # symbol_id: int = IntegerField(null=True)
     date: date = DateField()
-    level: str = CharField(max_length=2)
-    direction: str = CharField(max_length=1)
-    trade_time: str = CharField(max_length=4)
-    interval: str = CharField(max_length=2)
-    role: str = CharField(max_length=1)
+    level: str = FixedCharField(max_length=2, null=False)
+    direction: str = FixedCharField(max_length=1, null=False)
+    trade_time: str = FixedCharField(max_length=4, null=False)
+    interval: str = FixedCharField(max_length=3, null=False)
+    role: str = FixedCharField(max_length=1, null=False)
     order_count: int = IntegerField()
     order_volume: int = IntegerField()
     turnover: float = FloatField()
@@ -407,61 +407,18 @@ class DbStockCapitalDataNew(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "date", "trade_time", "level", "direction", "interval"), True),)
+        indexes = ((("symbol_id", "interval", "date", "trade_time", "level", "direction"), True),)
 
-
-class DbStockCapitalFlatData(Model):
-    id = AutoField()
-
-    symbol: str = CharField(max_length=32)
-    date: date = DateField()
-    interval: str = CharField(max_length=8)
-    type: str = CharField(max_length=8)
-    order_count_buy_XL: int = IntegerField()
-    order_count_buy_L: int = IntegerField()
-    order_count_buy_M: int = IntegerField()
-    order_count_buy_S: int = IntegerField()
-    order_count_sale_XL: int = IntegerField()
-    order_count_sale_L: int = IntegerField()
-    order_count_sale_M: int = IntegerField()
-    order_count_sale_S: int = IntegerField()
-    order_volume_buy_XL: int = IntegerField()
-    order_volume_buy_L: int = IntegerField()
-    order_volume_buy_M: int = IntegerField()
-    order_volume_buy_S: int = IntegerField()
-    order_volume_sale_XL: int = IntegerField()
-    order_volume_sale_L: int = IntegerField()
-    order_volume_sale_M: int = IntegerField()
-    order_volume_sale_S: int = IntegerField()
-    turnover_buy_XL: int = IntegerField()
-    turnover_buy_L: int = IntegerField()
-    turnover_buy_M: int = IntegerField()
-    turnover_buy_S: int = IntegerField()
-    turnover_sale_XL: int = IntegerField()
-    turnover_sale_L: int = IntegerField()
-    turnover_sale_M: int = IntegerField()
-    turnover_sale_S: int = IntegerField()
-    volume_buy_XL: int = IntegerField()
-    volume_buy_L: int = IntegerField()
-    volume_buy_M: int = IntegerField()
-    volume_buy_S: int = IntegerField()
-    volume_sale_XL: int = IntegerField()
-    volume_sale_L: int = IntegerField()
-    volume_sale_M: int = IntegerField()
-    volume_sale_S: int = IntegerField()
-
-    class Meta:
-        database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "date", "interval", "type"), True),)
 
 class DbStockCapitalFlatDataNew(Model):
     id = AutoField()
 
     symbol: str = CharField(max_length=32)
-    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='capital_flat', verbose_name="股票基础信息")
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='capital_flat',
+                                  verbose_name="股票基础信息")
     # symbol_id: int = IntegerField(null=True)
     datetime: datetime = DateTimeField()
-    interval: str = CharField(max_length=8)
+    interval: str = FixedCharField(max_length=3, null=False)
     order_count_buy_XL: int = IntegerField()
     order_count_buy_L: int = IntegerField()
     order_count_buy_M: int = IntegerField()
@@ -497,15 +454,17 @@ class DbStockCapitalFlatDataNew(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol", "datetime", "interval"), True),)
+        indexes = ((("symbol_id", "interval", "datetime"), True),)
 
+
+# TODO: to delete
 class DbCapitalOverview(Model):
     """Level2汇总数据表映射对象"""
 
     id: AutoField = AutoField()
 
     symbol = ForeignKeyField(DbSymbol, backref='capital_overview', verbose_name="股票基础信息")
-    interval: str = CharField()
+    interval: str = FixedCharField(max_length=3)
     count: int = IntegerField()
     start: date = DateField()
     end: date = DateField()
@@ -562,7 +521,6 @@ class DbSymbolLists(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("name", 'type', 'dt'), True),)
 
 
 class DbSymbolListMap(Model):
@@ -576,17 +534,14 @@ class DbSymbolListMap(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = (
-            # 创建一个联合索引
-            (('symbol_list', 'symbol'), True),
-        )
+        indexes = ((('symbol_list_id', 'symbol_id'), True),)
 
 
 class DbDailyStatData(Model):
     id = AutoField()
     symbol = ForeignKeyField(DbSymbol, backref='meta', verbose_name="股票基础信息")
     datetime: datetime = DateTimeField()
-    interval: str = CharField()
+    interval: str = FixedCharField(max_length=3, null=False)
 
     # last_price: float = DoubleField()
     change_pct: float = DoubleField()
@@ -604,7 +559,7 @@ class DbDailyStatData(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes: tuple = ((("symbol", "interval", "datetime"), True),)
+        indexes: tuple = ((("datetime", "interval", "symbol_id"), True),)
 
 
 # a new model to log operation
@@ -635,7 +590,7 @@ class DbAliyunBinlogFiles(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("binlog_file", "remote_status"), True),)
+        # indexes = ((("binlog_file", "remote_status"), True),)
 
 
 class MysqlDatabase(BaseDatabase):
@@ -645,139 +600,60 @@ class MysqlDatabase(BaseDatabase):
         """"""
         self.db: PeeweeMySQLDatabase = db
         self.db.connect()
-        self.db.create_tables([DbBarData, DbTickData, DbBarOverview, DbTickOverview])
+        self.db.create_tables([DbBarDataNew, DbTickData, DbBarOverviewNew, DbTickOverview])
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
         self.db.create_tables([DbStockCapitalDataNew, DbStockCapitalFlatDataNew])
         self.db.create_tables([DbUserData, DbOperation, DbAliyunBinlogFiles, DbBacktestingResults])
 
-    def save_index_bar_data(self, bars: List[BarData], stream: bool = False,
-                            conflict: Conflict = Conflict.REPLACE) -> bool:
-        """保存Index K线数据"""
-        # 读取主键参数
-        bar: BarData = bars[0]
-        symbol: str = bar.symbol
-        exchange: Exchange = bar.exchange
-        interval: Interval = bar.interval
-
-        # 将BarData数据转换为字典，并调整时区
-        data: list = []
-
-        for bar in bars:
-            bar.datetime = convert_tz(bar.datetime)
-
-            d: dict = bar.__dict__
-            d["exchange"] = d["exchange"].value
-            d["interval"] = d["interval"].value
-            d.pop("gateway_name")
-            d.pop("vt_symbol")
-            data.append(d)
-
-        # 使用upsert操作将数据更新到数据库中
-        with self.db.atomic():
-            if conflict == Conflict.IGNORE:
-                for c in chunked(data, 50):
-                    DbIndexBarData.insert_many(c).on_conflict_ignore().execute()
-            else:
-                for c in chunked(data, 50):
-                    DbIndexBarData.insert_many(c).on_conflict_replace().execute()
-
-        # 更新K线汇总数据
-        overview: DbBarOverview = DbBarOverview.get_or_none(
-            DbBarOverview.symbol == symbol,
-            DbBarOverview.exchange == exchange.value,
-            DbBarOverview.interval == interval.value,
-            DbBarOverview.type == "INDX",
-        )
-
-        if not overview:
-            overview: DbBarOverview = DbBarOverview()
-            overview.symbol = symbol
-            overview.exchange = exchange.value
-            overview.interval = interval.value
-            overview.start = bars[0].datetime
-            overview.end = bars[-1].datetime
-            overview.type = "INDX"
-            overview.count = len(bars)
-        elif stream:
-            overview.end = bars[-1].datetime
-            overview.count += len(bars)
-        else:
-            overview.start = min(bars[0].datetime, overview.start)
-            overview.end = max(bars[-1].datetime, overview.end)
-
-            s: ModelSelect = DbIndexBarData.select().where(
-                (DbIndexBarData.symbol == symbol)
-                & (DbIndexBarData.exchange == exchange.value)
-                & (DbIndexBarData.interval == interval.value)
-            )
-            overview.count = s.count()
-
-        overview.save()
-
-        return True
-
     def save_bar_data(self, bars: List[BarData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
-        """保存K线数据"""
+        """保存K线数据, bars都是来自同一个symbol, 且interval相同"""
         # 读取主键参数
         bar: BarData = bars[0]
         symbol: str = bar.symbol
         exchange: Exchange = bar.exchange
+
+        ds: DbSymbol = DbSymbol.get_or_none(DbSymbol.symbol == symbol, DbSymbol.exchange == exchange.value)
+        if not ds:
+            print(f"在DbSymbol表中没有找到该Symbol的信息: {symbol}.{exchange}")
+            return False
+
         interval: Interval = bar.interval
-
-        # 将BarData数据转换为字典，并调整时区
-        data: list = []
-
-        for bar in bars:
-            bar.datetime = convert_tz(bar.datetime)
-
-            d: dict = bar.__dict__
-            d["exchange"] = d["exchange"].value
-            d["interval"] = d["interval"].value
-            d.pop("gateway_name")
-            d.pop("vt_symbol")
-            data.append(d)
+        data: list = [bar.to_dict(update={'symbol_id': ds.id}, exclude=['exchange', 'stype']) for bar in bars]
 
         # 使用upsert操作将数据更新到数据库中
         with self.db.atomic():
             if conflict == Conflict.IGNORE:
                 for c in chunked(data, 50):
-                    DbBarData.insert_many(c).on_conflict_ignore().execute()
+                    DbBarDataNew.insert_many(c).on_conflict_ignore().execute()
             else:
                 for c in chunked(data, 50):
-                    DbBarData.insert_many(c).on_conflict_replace().execute()
+                    DbBarDataNew.insert_many(c).on_conflict_replace().execute()
+
+        overview: DbBarOverviewNew = ds.overviews.where((DbBarOverviewNew.interval == interval.value)).first()
 
         # 更新K线汇总数据
-        overview: DbBarOverview = DbBarOverview.get_or_none(
-            DbBarOverview.symbol == symbol,
-            DbBarOverview.exchange == exchange.value,
-            DbBarOverview.interval == interval.value,
-            DbBarOverview.type == "CS",
-        )
-
         if not overview:
-            overview: DbBarOverview = DbBarOverview()
-            overview.symbol = symbol
-            overview.exchange = exchange.value
-            overview.interval = interval.value
-            overview.start = bars[0].datetime
-            overview.end = bars[-1].datetime
-            overview.type = "CS"
-            overview.count = len(bars)
+            DbBarOverviewNew.create(
+                symbol=symbol,
+                symbol_meta=ds,
+                interval=interval.value,
+                count=len(bars),
+                start=bars[0].datetime,
+                end=bars[-1].datetime
+            )
         elif stream:
             overview.end = bars[-1].datetime
             overview.count += len(bars)
+            overview.save()
         else:
-            overview.start = min(bars[0].datetime, overview.start)
-            overview.end = max(bars[-1].datetime, overview.end)
-
-            s: ModelSelect = DbBarData.select().where(
-                (DbBarData.symbol == symbol)
-                & (DbBarData.exchange == exchange.value)
-                & (DbBarData.interval == interval.value)
+            overview.start = min(bars[0].datetime, overview.start.astimezone(DB_TZ))
+            overview.end = max(bars[-1].datetime, overview.end.astimezone(DB_TZ))
+            s: ModelSelect = DbBarDataNew.select().where(
+                (DbBarDataNew.symbol_id == ds.id)
+                & (DbBarDataNew.interval == interval.value)
             )
             overview.count = s.count()
-
-        overview.save()
+            overview.save()
 
         return True
 
@@ -846,72 +722,41 @@ class MysqlDatabase(BaseDatabase):
             exchange: Exchange,
             interval: Interval,
             start: datetime,
-            end: datetime
+            end: datetime,
+            stype: str = None
     ) -> List[BarData]:
-        """"""
+        """
+        stype 默认不用设置，如果设置了非空值，则加入到查询参数
+        """
+        s_conditions = [DbSymbol.symbol == symbol, DbSymbol.exchange == exchange.value]
+        if stype:
+            s_conditions.append(DbSymbol.type == stype)
+
         s: ModelSelect = (
-            DbBarData.select().where(
-                (DbBarData.symbol == symbol)
-                & (DbBarData.exchange == exchange.value)
-                & (DbBarData.interval == interval.value)
-                & (DbBarData.datetime >= start)
-                & (DbBarData.datetime <= end)
-            ).order_by(DbBarData.datetime)
+            DbBarDataNew.select().join(DbSymbol).where(
+                *s_conditions,
+                DbBarDataNew.interval == interval.value,
+                DbBarDataNew.datetime >= start,
+                DbBarDataNew.datetime <= end
+            ).order_by(DbBarDataNew.datetime)
         )
 
         bars: List[BarData] = []
         for db_bar in s:
             bar: BarData = BarData(
                 symbol=db_bar.symbol,
-                exchange=Exchange(db_bar.exchange),
+                symbol_id=db_bar.symbol_meta.id,
+                exchange=Exchange(db_bar.symbol_meta.exchange),
                 datetime=datetime.fromtimestamp(db_bar.datetime.timestamp(), DB_TZ),
                 interval=Interval(db_bar.interval),
                 volume=db_bar.volume,
                 turnover=db_bar.turnover,
                 open_interest=db_bar.open_interest,
-                open_price=db_bar.open_price,
-                high_price=db_bar.high_price,
-                low_price=db_bar.low_price,
-                close_price=db_bar.close_price,
-                gateway_name="DB"
-            )
-            bars.append(bar)
-
-        return bars
-
-    def load_index_bar_data(
-            self,
-            symbol: str,
-            exchange: Exchange,
-            interval: Interval,
-            start: datetime,
-            end: datetime
-    ) -> List[BarData]:
-        """"""
-        s: ModelSelect = (
-            DbIndexBarData.select().where(
-                (DbIndexBarData.symbol == symbol)
-                & (DbIndexBarData.exchange == exchange.value)
-                & (DbIndexBarData.interval == interval.value)
-                & (DbIndexBarData.datetime >= start)
-                & (DbIndexBarData.datetime <= end)
-            ).order_by(DbIndexBarData.datetime)
-        )
-
-        bars: List[BarData] = []
-        for db_bar in s:
-            bar: BarData = BarData(
-                symbol=db_bar.symbol,
-                exchange=Exchange(db_bar.exchange),
-                datetime=datetime.fromtimestamp(db_bar.datetime.timestamp(), DB_TZ),
-                interval=Interval(db_bar.interval),
-                volume=db_bar.volume,
-                turnover=db_bar.turnover,
-                open_interest=db_bar.open_interest,
-                open_price=db_bar.open_price,
-                high_price=db_bar.high_price,
-                low_price=db_bar.low_price,
-                close_price=db_bar.close_price,
+                open_price=db_bar.open,
+                high_price=db_bar.high,
+                low_price=db_bar.low,
+                close_price=db_bar.close,
+                stype=db_bar.symbol_meta.type,
                 gateway_name="DB"
             )
             bars.append(bar)
@@ -987,18 +832,17 @@ class MysqlDatabase(BaseDatabase):
             interval: Interval
     ) -> int:
         """删除K线数据"""
-        d: ModelDelete = DbBarData.delete().where(
-            (DbBarData.symbol == symbol)
-            & (DbBarData.exchange == exchange.value)
-            & (DbBarData.interval == interval.value)
+        symbol_meta = DbSymbol.get((DbSymbol.symbol == symbol) & (DbSymbol.exchange == exchange.value))
+        query: ModelDelete = DbBarDataNew.delete().where(
+            (DbBarDataNew.symbol_meta == symbol_meta)
+            & (DbBarDataNew.interval == interval.value)
         )
-        count: int = d.execute()
+        count: int = query.execute()  # 执行删除操作
 
         # 删除K线汇总数据
-        d2: ModelDelete = DbBarOverview.delete().where(
-            (DbBarOverview.symbol == symbol)
-            & (DbBarOverview.exchange == exchange.value)
-            & (DbBarOverview.interval == interval.value)
+        d2: ModelDelete = DbBarOverviewNew.delete().where(
+            (DbBarOverviewNew.symbol_meta == symbol_meta)
+            & (DbBarOverviewNew.interval == interval.value)
         )
         d2.execute()
         return count
@@ -1024,25 +868,36 @@ class MysqlDatabase(BaseDatabase):
         d2.execute()
         return count
 
-    def get_bar_overview(self, symbol_type: str = "CS") -> List[BarOverview]:
+    def get_bar_overview(self, symbol_id: int = None, symbol: str = None, stype: str = 'CS') -> List[BarOverview]:
+        if not symbol_id and not symbol:
+            return []
+
         """查询数据库中的K线汇总信息"""
         # 如果已有K线，但缺失汇总信息，则执行初始化
-        data_count: int = DbBarData.select().count() if symbol_type == "CS" else DbIndexBarData.select().count()
-        overview_count: int = DbBarOverview.select().where((DbBarOverview.type == symbol_type)).count()
+        data_count: int = DbBarDataNew.select().count()
+        overview_count: int = DbBarOverviewNew.select().count()
         if data_count and not overview_count:
-            if symbol_type == "CS":
-                self.init_bar_overview()
-            else:
-                self.init_index_bar_overview()
+            self.init_bar_overview()
 
-        s: ModelSelect = DbBarOverview.select().where((DbBarOverview.type == symbol_type))
-        overviews: List[BarOverview] = []
-        for overview in s:
-            overview.exchange = Exchange(overview.exchange)
-            overview.interval = Interval(overview.interval)
-            overview.start = datetime.fromtimestamp(overview.start.timestamp(), DB_TZ)
-            overview.end = datetime.fromtimestamp(overview.end.timestamp(), DB_TZ)
+        if not symbol_id and not symbol:
+            sm = (DbBarOverviewNew.select(DbSymbol, DbBarOverviewNew)
+                  .join(DbSymbol)
+                  .where(DbSymbol.type == stype, DbSymbol.market == 'CN'))
+
+        elif not symbol_id:
+            sm = (DbBarOverviewNew.select(DbSymbol, DbBarOverviewNew)
+                  .join(DbSymbol)
+                  .where((DbSymbol.symbol == symbol) & (DbSymbol.type == stype)))
+        else:
+            sm = (DbBarOverviewNew.select(DbSymbol, DbBarOverviewNew)
+                  .join(DbSymbol)
+                  .where(DbBarOverviewNew.symbol_id == symbol_id))
+
+        overviews = []
+        for s in list(sm.dicts()):
+            overview: BarOverview = BarOverview.from_dict(data=s, update={'symbol_id': s['id']})
             overviews.append(overview)
+
         return overviews
 
     def get_tick_overview(self) -> List[TickOverview]:
@@ -1057,145 +912,70 @@ class MysqlDatabase(BaseDatabase):
     def init_bar_overview(self) -> None:
         """初始化数据库中的K线汇总信息"""
         s: ModelSelect = (
-            DbBarData.select(
-                DbBarData.symbol,
-                DbBarData.exchange,
-                DbBarData.interval,
-                fn.COUNT(DbBarData.id).alias("count")
+            DbBarDataNew.select(
+                DbBarDataNew.symbol,
+                DbBarDataNew.symbol_id,
+                DbBarDataNew.interval,
+                fn.COUNT(DbBarDataNew.id).alias("count"),
+                fn.MIN(DbBarDataNew.datetime).alias("start"),
+                fn.MAX(DbBarDataNew.datetime).alias("end"),
             ).group_by(
-                DbBarData.symbol,
-                DbBarData.exchange,
-                DbBarData.interval
+                DbBarDataNew.symbol_id,
+                DbBarDataNew.interval
             )
         )
 
-        for data in s:
-            overview: DbBarOverview = DbBarOverview()
-            overview.symbol = data.symbol
-            overview.exchange = data.exchange
-            overview.interval = data.interval
-            overview.type = "CS"
-            overview.count = data.count
+        ov_list = list(s.dicts())
+        DbBarOverviewNew.insert_many(ov_list).on_conflict(
+            preserve=[DbBarOverviewNew.count, DbBarOverviewNew.start, DbBarOverviewNew.end]
+        ).execute()
 
-            start_bar: DbBarData = (
-                DbBarData.select()
-                .where(
-                    (DbBarData.symbol == data.symbol)
-                    & (DbBarData.exchange == data.exchange)
-                    & (DbBarData.interval == data.interval)
-                )
-                .order_by(DbBarData.datetime.asc())
-                .first()
-            )
-            overview.start = start_bar.datetime
-
-            end_bar: DbBarData = (
-                DbBarData.select()
-                .where(
-                    (DbBarData.symbol == data.symbol)
-                    & (DbBarData.exchange == data.exchange)
-                    & (DbBarData.interval == data.interval)
-                )
-                .order_by(DbBarData.datetime.desc())
-                .first()
-            )
-            overview.end = end_bar.datetime
-
-            overview.save()
-
-    def init_index_bar_overview(self) -> None:
-        """初始化数据库中的K线汇总信息"""
-        s: ModelSelect = (
-            DbIndexBarData.select(
-                DbIndexBarData.symbol,
-                DbIndexBarData.exchange,
-                DbIndexBarData.interval,
-                fn.COUNT(DbIndexBarData.id).alias("count")
-            ).group_by(
-                DbIndexBarData.symbol,
-                DbIndexBarData.exchange,
-                DbIndexBarData.interval
-            )
-        )
-
-        for data in s:
-            overview: DbBarOverview = DbBarOverview()
-            overview.symbol = data.symbol
-            overview.exchange = data.exchange
-            overview.interval = data.interval
-            overview.type = "INDX"
-            overview.count = data.count
-
-            start_bar: DbIndexBarData = (
-                DbIndexBarData.select()
-                .where(
-                    (DbIndexBarData.symbol == data.symbol)
-                    & (DbIndexBarData.exchange == data.exchange)
-                    & (DbIndexBarData.interval == data.interval)
-                )
-                .order_by(DbIndexBarData.datetime.asc())
-                .first()
-            )
-            overview.start = start_bar.datetime
-
-            end_bar: DbIndexBarData = (
-                DbIndexBarData.select()
-                .where(
-                    (DbIndexBarData.symbol == data.symbol)
-                    & (DbIndexBarData.exchange == data.exchange)
-                    & (DbIndexBarData.interval == data.interval)
-                )
-                .order_by(DbIndexBarData.datetime.desc())
-                .first()
-            )
-            overview.end = end_bar.datetime
-
-            overview.save()
-
-    def get_symbol_ids(self, s_type: str, market: Market) -> Dict[str, int]:
-        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol).where(
+    def get_symbol_ids_by_market(self, s_type: str, market: Market) -> Dict[str, int]:
+        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol, DbSymbol.exchange).where(
             (DbSymbol.type == s_type) & (DbSymbol.market == market.value)).dicts()
         id_maps = {}
         for d in s:
-            id_maps[d["symbol"]] = d["id"]
+            id_maps[f"{d['symbol']}.{d['exchange']}"] = d["id"]
         return id_maps
 
-    def get_basic_stock_data(self) -> Dict[Market, List[BasicStockData]]:
+    def get_symbol_ids_by_symbols(self, vt_symbols: list) -> Dict[str, int]:
+        s = DbSymbol.select(DbSymbol.id, DbSymbol.symbol, DbSymbol.exchange).where(
+            fn.CONCAT(DbSymbol.symbol, '.', DbSymbol.exchange).in_(vt_symbols)
+        ).dicts()
+        id_maps = {}
+        for d in s:
+            id_maps[f"{d['symbol']}.{d['exchange']}"] = d["id"]
+        return id_maps
+
+    def get_basic_stock_data(self, markets: List[Market]) -> Dict[Market, List[BasicStockData]]:
         """查询数据库中的基础信息汇总信息"""
 
         s = DbSymbol.select(DbSymbol, DbStockMeta).join(DbStockMeta).where(
+            (DbSymbol.market.in_([market.value for market in markets])) &
             (DbSymbol.status == 'active') &
             (DbSymbol.type == 'CS')
         ).dicts()
-        overviews = {}
+        overviews = {market: [] for market in markets}
         for ov in s:
-            ov["exchange"] = Exchange(ov['exchange'])
-            market = Market(ov['market'])
-            ov['market'] = market
-            if market not in overviews:
-                overviews[market] = []
-            overviews[market].append(BasicStockData(**ov))
+            overviews[Market(ov['market'])].append(BasicStockData.from_dict(data=ov))
+
         return overviews
 
-    def get_basic_index_data(self) -> Dict[Market, List[BasicIndexData]]:
+    def get_basic_index_data(self, markets: List[Market]) -> Dict[Market, List[BasicIndexData]]:
         """查询数据库中的基础信息汇总信息"""
 
         s = DbSymbol.select(DbSymbol, DbIndexMeta).join(DbIndexMeta).where(
+            (DbSymbol.market.in_([market.value for market in markets])) &
             (DbSymbol.status == 'active') &
             (DbSymbol.type == 'INDX')
         ).dicts()
-        overviews = {}
+
+        overviews = {market: [] for market in markets}
         for ov in s:
-            ov["exchange"] = Exchange(ov['exchange'])
-            market = Market(ov['market'])
-            ov['market'] = market
-            if market not in overviews:
-                overviews[market] = []
-            overviews[market].append(BasicIndexData(**ov))
+            overviews[Market(ov['market'])].append(BasicIndexData.from_dict(data=ov))
         return overviews
 
-    def get_basic_info_by_symbols(self, symbols, market: Market = Market.CN, symbol_type: str = 'CS') -> List[
-        BasicSymbolData]:
+    def get_basic_info_by_symbols(self, symbols, market: Market = Market.CN, symbol_type: str = 'CS') -> List[BasicSymbolData]:
         """查询数据库中的基础信息"""
 
         basic_datas: List[BasicSymbolData] = []
@@ -1213,9 +993,7 @@ class MysqlDatabase(BaseDatabase):
             )
 
             for dc in stocks:
-                dc["exchange"] = Exchange(dc['exchange'])
-                dc["market"] = Market(dc['market'])
-                basic_datas.append(BasicStockData(**dc))
+                basic_datas.append(BasicStockData.from_dict(data=dc))
 
         elif symbol_type == 'INDX':
             indexes = (
@@ -1229,9 +1007,7 @@ class MysqlDatabase(BaseDatabase):
                 .dicts()
             )
             for dc in indexes:
-                dc["exchange"] = Exchange(dc['exchange'])
-                dc["market"] = Market(dc['market'])
-                basic_datas.append(BasicIndexData(**dc))
+                basic_datas.append(BasicIndexData.from_dict(data=dc))
 
         return basic_datas
 
@@ -1268,7 +1044,7 @@ class MysqlDatabase(BaseDatabase):
             for c in chunked(data, 1000):
                 DbStockCapitalFlatDataNew.insert_many(c).on_conflict_replace().execute()
 
-    def update_stocks_meta_data(self, stocks_df, market: Market):
+    def update_stocks_meta_data(self, stocks_df):
         # 第一部分：更新或插入数据
         symbols_dict = stocks_df[['symbol', 'name', 'exchange', 'market', 'type', 'status', 'update_dt']].to_dict(
             'records')
@@ -1276,35 +1052,30 @@ class MysqlDatabase(BaseDatabase):
             preserve=[DbSymbol.name, DbSymbol.status, DbSymbol.update_dt]
         ).execute()
 
-        symbols = stocks_df['symbol'].to_list()
+        # symbols = stocks_df['symbol'].to_list()
+        vt_symbols = [f"{row['symbol']}.{row['exchange']}" for index, row in stocks_df.iterrows()]
 
         # 查询这些symbol的当前状态，包括它们的ID
-        db_symbols = (DbSymbol.select(DbSymbol.id, DbSymbol.symbol)
-                      .where((DbSymbol.symbol.in_(symbols)) &
-                             (DbSymbol.type == 'CS') &
-                             (DbSymbol.market == market.value)
-                             )
-                      .dicts())
-        # convert db_symbols to dataframe and merge stocks_df
-        db_symbols_df = pd.DataFrame(db_symbols)
-        stocks_data = pd.merge(stocks_df, db_symbols_df, on='symbol', how='left')
-        meta_df = stocks_data.drop(
+        symbol_ids = self.get_symbol_ids_by_symbols(vt_symbols)
+        stocks_df['symbol_id'] = stocks_df.apply(lambda row: symbol_ids[f"{row['symbol']}.{row['exchange']}"], axis=1)
+        meta_df = stocks_df.drop(
             ['symbol', 'name', 'exchange', 'market', 'type', 'status', 'shares_circ_a', 'shares_non_circ_a',
              'shares_total_a', 'shares_total'], axis=1)
-        meta_dict = meta_df.rename(columns={'id': 'symbol_id'}).to_dict('records')
+        meta_dict = meta_df.to_dict('records')
 
         preserve_fields = [field for field in DbStockMeta._meta.fields.keys() if
                            field not in ['id', 'symbol', 'symbol_id']]
         DbStockMeta.insert_many(meta_dict).on_conflict(preserve=preserve_fields).execute()
 
         # 第二部分：更新未包含在列表中的DbSymbol的状态
+        stype = stocks_df.iloc[0]['type']
         query = DbSymbol.update(status='inactive').where(
-            (DbSymbol.symbol.not_in(symbols)) &
-            (DbSymbol.market == market.value) &
-            (DbSymbol.type == 'CS')
+            fn.CONCAT(DbSymbol.symbol, '.', DbSymbol.exchange).not_in(vt_symbols),
+            DbSymbol.type == stype
         )
         query.execute()
 
+    # TODO: add index to capitalflat data
     def get_capital_days(self, start_date: datetime, end_date: datetime) -> List[str]:
         # 查询并去重
         query = (DbStockCapitalFlatDataNew
@@ -1320,16 +1091,21 @@ class MysqlDatabase(BaseDatabase):
 
         return days_dd
 
+    # TODO: add index to dbdailystatdata
     def get_latest_statistic_date(self):
         latest = (DbDailyStatData.select()
-                     .where(DbDailyStatData.interval == 'd')
-                     .order_by(DbDailyStatData.datetime.desc())
-                     .first())
+                  .where(DbDailyStatData.interval == 'd')
+                  .order_by(DbDailyStatData.datetime.desc())
+                  .first())
         return datetime.fromtimestamp(latest.datetime.timestamp(), DB_TZ)
+
+    def get_latest_overview_date(self, market: Market):
+        dt: datetime = DbBarOverviewNew.select(fn.MAX(DbBarOverviewNew.end)).join(DbSymbol).where(DbSymbol.market == market.value).scalar()
+        return dt.astimezone(DB_TZ)
 
     def get_latest_op_info(self, op_type):
         latest = (DbOperation.select().where((DbOperation.op_type == op_type) &
-                    (DbOperation.op_status == 'success'))
+                                             (DbOperation.op_status == 'success'))
                   .order_by(DbOperation.op_time.desc())
                   .first())
         return latest
@@ -1348,7 +1124,7 @@ class MysqlDatabase(BaseDatabase):
 
     def get_capital_data_by_month(self, month_str) -> List:
         query = (DbStockCapitalDataNew
-                 .select(DbStockCapitalDataNew, DbStockCapitalDataNew.symbol_meta.alias('symbol_id'))
+                 .select(DbStockCapitalDataNew, DbStockCapitalDataNew.symbol_id)
                  .where(fn.DATE_FORMAT(DbStockCapitalDataNew.date, '%Y%m') == month_str)
                  .order_by(DbStockCapitalDataNew.symbol)
                  .dicts())
