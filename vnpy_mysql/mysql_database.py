@@ -454,7 +454,10 @@ class DbStockCapitalFlatDataNew(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes = ((("symbol_id", "interval", "datetime"), True),)
+        indexes = (
+            (("symbol_id", "interval", "datetime"), True),
+            (("interval", "datetime"), False),
+        )
 
 
 # TODO: to delete
@@ -559,7 +562,10 @@ class DbDailyStatData(Model):
 
     class Meta:
         database: PeeweeMySQLDatabase = db
-        indexes: tuple = ((("datetime", "interval", "symbol_id"), True),)
+        indexes: tuple = (
+            (("datetime", "interval", "symbol_id"), True),
+            (("interval", "datetime"), False),
+        )
 
 
 # a new model to log operation
@@ -1075,13 +1081,12 @@ class MysqlDatabase(BaseDatabase):
         )
         query.execute()
 
-    # TODO: add index to capitalflat data
     def get_capital_days(self, start_date: datetime, end_date: datetime) -> List[str]:
         # 查询并去重
         query = (DbStockCapitalFlatDataNew
                  .select(DbStockCapitalFlatDataNew.datetime)
                  .where((DbStockCapitalFlatDataNew.datetime >= start_date) &
-                        (DbStockCapitalFlatDataNew.datetime < end_date) &
+                        (DbStockCapitalFlatDataNew.datetime <= end_date) &
                         (DbStockCapitalFlatDataNew.interval == 'd'))
                  .group_by(DbStockCapitalFlatDataNew.datetime)
                  .order_by(DbStockCapitalFlatDataNew.datetime))
@@ -1091,7 +1096,6 @@ class MysqlDatabase(BaseDatabase):
 
         return days_dd
 
-    # TODO: add index to dbdailystatdata
     def get_latest_statistic_date(self):
         latest = (DbDailyStatData.select()
                   .where(DbDailyStatData.interval == 'd')
