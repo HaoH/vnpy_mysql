@@ -624,7 +624,8 @@ class MysqlDatabase(BaseDatabase):
             return False
 
         interval: Interval = bar.interval
-        data: list = [bar.to_dict(update={'symbol_id': ds.id}, exclude=['exchange', 'stype']) for bar in bars]
+        # important 过滤掉停牌交易日的数据
+        data: list = [bar.to_dict(update={'symbol_id': ds.id}, exclude=['exchange', 'stype']) for bar in bars if bar.volume != 0]
 
         # 使用upsert操作将数据更新到数据库中
         with self.db.atomic():
