@@ -1134,3 +1134,17 @@ class MysqlDatabase(BaseDatabase):
                  .order_by(DbStockCapitalDataNew.symbol)
                  .dicts())
         return list(query)
+
+    def get_capital_flat_data_by_symbol(self, symbol_id, start_dt: datetime = None, end_dt: datetime = None) -> List:
+        s_conditions = [DbStockCapitalFlatDataNew.symbol_id == symbol_id, DbStockCapitalFlatDataNew.interval == 'd']
+        if start_dt:
+            s_conditions.append(DbStockCapitalFlatDataNew.datetime >= start_dt)
+        if end_dt:
+            s_conditions.append(DbStockCapitalFlatDataNew.datetime <= end_dt)
+
+        query = (DbStockCapitalFlatDataNew
+                 .select(DbStockCapitalFlatDataNew, DbStockCapitalFlatDataNew.symbol_id)
+                 .where(*s_conditions)
+                 .order_by(DbStockCapitalFlatDataNew.datetime.asc())
+                 .dicts())
+        return list(query)
