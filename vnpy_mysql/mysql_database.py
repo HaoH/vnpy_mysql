@@ -15,7 +15,7 @@ from peewee import (
     fn,
     DoubleField,
     DateField,
-    BooleanField, BigIntegerField, ForeignKeyField, SQL, FloatField, FixedCharField
+    BooleanField, BigIntegerField, ForeignKeyField, SQL, FloatField, FixedCharField, JOIN
 )
 from playhouse.shortcuts import ReconnectMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,7 +30,7 @@ from vnpy.trader.database import (
     convert_tz
 )
 from vnpy.trader.setting import SETTINGS
-from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData
+from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData, ExBarData
 
 
 class ReconnectMySQLDatabase(ReconnectMixin, PeeweeMySQLDatabase):
@@ -769,6 +769,48 @@ class MysqlDatabase(BaseDatabase):
             bars.append(bar)
 
         return bars
+
+    def load_ex_bar_data(
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            start: datetime,
+            end: datetime,
+            stype: str = None
+    ) -> List[ExBarData]:
+        """
+        stype 默认不用设置，如果设置了非空值，则加入到查询参数
+        """
+        s_conditions = [DbSymbol.symbol == symbol, DbSymbol.exchange == exchange.value]
+        if stype:
+            s_conditions.append(DbSymbol.type == stype)
+
+        s: ModelSelect = (
+            DbBarDataNew
+            .select(DbSymbol, DbBarDataNew, DbStockCapitalFlatDataNew)
+            .join(DbSymbol)
+            .join(DbStockCapitalFlatDataNew, JOIN.LEFT_OUTER, on=(
+                    (DbStockCapitalFlatDataNew.symbol_id == DbSymbol.id) &
+                    (DbStockCapitalFlatDataNew.interval == interval.value) &
+                    (DbStockCapitalFlatDataNew.datetime == DbBarDataNew.datetime)
+            ))
+            .where(
+                *s_conditions,
+                DbBarDataNew.interval == interval.value,
+                DbBarDataNew.datetime >= start,
+                DbBarDataNew.datetime <= end
+            )
+            .order_by(DbBarDataNew.datetime)
+        )
+
+        bars: List[ExBarData] = []
+        for ds in list(s.dicts()):
+            ex_bar_data: ExBarData = ExBarData.from_dict(data=ds, update={'symbol_id': ds['id']})
+            bars.append(ex_bar_data)
+
+        return bars
+
 
     def load_tick_data(
             self,
