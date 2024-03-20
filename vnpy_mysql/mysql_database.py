@@ -546,17 +546,23 @@ class DbDailyStatData(Model):
     datetime: datetime = DateTimeField()
     interval: str = FixedCharField(max_length=3, null=False)
 
-    # last_price: float = DoubleField()
+    last_price: float = DoubleField()
     change_pct: float = DoubleField()
     volume_ratio: float = DoubleField()
-    # large_capital_amount_in: float = DoubleField()      # 主力资金流入
     change_pct_5u: float = DoubleField()
     change_pct_10u: float = DoubleField()
     change_pct_22u: float = DoubleField()
 
     # 以下仅适用于interval=d
-    cont_up_days: float = IntegerField()  # 连续上涨天数
-    cont_max_up_days: float = IntegerField()  # 连续涨停天数，最大连续间断不超过1天
+    cont_up_days: int = IntegerField()  # 连续上涨天数
+    cont_max_up_days: int = IntegerField()  # 连续涨停天数，最大连续间断不超过1天
+
+    # 主力资金动态
+    capital_ni_days: int = IntegerField()   # 主力连续净流入天数
+    capital_ni_volume: int = IntegerField()   # 主力当日净流入成交量
+    capital_ni_turnover: int = IntegerField()   # 主力当日净流入金额
+    capital_ni_volume_3u: int = IntegerField()  # 主力3日净流入成交量
+    capital_ni_turnover_3u: int = IntegerField()  # 主力3日净流入金额
 
     update_dt: datetime = DateTimeField()
 
@@ -1060,15 +1066,22 @@ class MysqlDatabase(BaseDatabase):
 
         return basic_datas
 
-    def update_daily_stat_data(self, many_data: List, conflict: Conflict = Conflict.IGNORE):
+    def update_daily_stat_data(self, many_data: List, conflict: Conflict = Conflict.IGNORE, new_inds: List[str] = None):
         """更新每日统计数据"""
         with self.db.atomic():
             if conflict == Conflict.IGNORE:
                 for c in chunked(many_data, 50):
                     DbDailyStatData.insert_many(c).on_conflict_ignore().execute()
-            else:
+            elif conflict == Conflict.REPLACE:
                 for c in chunked(many_data, 50):
                     DbDailyStatData.insert_many(c).on_conflict_replace().execute()
+            elif conflict == Conflict.UPDATE:
+                preserve_columns = [getattr(DbDailyStatData, ind) for ind in new_inds]
+                preserve_columns.append(DbDailyStatData.update_dt)
+                for c in chunked(many_data, 50):
+                    DbDailyStatData.insert_many(c).on_conflict(
+                        preserve=preserve_columns
+                    ).execute()
 
     def save_operation_log(self, op_type: str, op_status: str, op_time: datetime, op_info: str = ""):
         # 插入新数据
