@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Dict, Union
 
 import pandas as pd
@@ -30,7 +30,7 @@ from vnpy.trader.database import (
     convert_tz
 )
 from vnpy.trader.setting import SETTINGS
-from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData, ExBarData
+from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData, ExBarData, SharesData
 
 
 class ReconnectMySQLDatabase(ReconnectMixin, PeeweeMySQLDatabase):
@@ -563,6 +563,7 @@ class DbDailyStatData(Model):
     capital_ni_turnover: int = IntegerField()   # 主力当日净流入金额
     capital_ni_volume_3u: int = IntegerField()  # 主力3日净流入成交量
     capital_ni_turnover_3u: int = IntegerField()  # 主力3日净流入金额
+    capital_ni_ratio: float = DoubleField()  # 主力净流入占流通盘比例
 
     update_dt: datetime = DateTimeField()
 
@@ -604,6 +605,28 @@ class DbAliyunBinlogFiles(Model):
         database: PeeweeMySQLDatabase = db
         # indexes = ((("binlog_file", "remote_status"), True),)
 
+class DbSharesData(Model):
+    """股本数据映射对象"""
+
+    id: AutoField = AutoField()
+
+    # symbol: str = CharField(max_length=32, null=False)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='shares', verbose_name="shares")
+    # date: date = DateField()
+    start_dt: date = DateField()
+    end_dt: date = DateField()
+
+    circulation_a: float = DoubleField()
+    non_circulation_a: float = DoubleField()
+    total_a: float = DoubleField()
+    total: float = DoubleField()
+    free_circulation: float = DoubleField()
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes: tuple = ((("symbol_id", "start_dt"), True),
+                          (("start_dt", "end_dt"), False))
+
 
 class MysqlDatabase(BaseDatabase):
     """Mysql数据库接口"""
@@ -616,6 +639,8 @@ class MysqlDatabase(BaseDatabase):
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
         self.db.create_tables([DbStockCapitalDataNew, DbStockCapitalFlatDataNew])
         self.db.create_tables([DbUserData, DbOperation, DbAliyunBinlogFiles, DbBacktestingResults])
+
+        self.symbol_ids = self.get_symbol_ids_by_market('CS', Market.CN)
 
     def save_bar_data(self, bars: List[BarData], stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
         """保存K线数据, bars都是来自同一个symbol, 且interval相同"""
@@ -788,18 +813,23 @@ class MysqlDatabase(BaseDatabase):
         """
         stype 默认不用设置，如果设置了非空值，则加入到查询参数
         """
+        # symbol_id = self.symbol_ids[f"{symbol}.{exchange.value}"]
         s_conditions = [DbSymbol.symbol == symbol, DbSymbol.exchange == exchange.value]
         if stype:
             s_conditions.append(DbSymbol.type == stype)
 
         s: ModelSelect = (
             DbBarDataNew
-            .select(DbSymbol, DbBarDataNew, DbStockCapitalFlatDataNew)
+            .select(DbSymbol, DbBarDataNew, DbStockCapitalFlatDataNew, DbSharesData.circulation_a)
             .join(DbSymbol)
             .join(DbStockCapitalFlatDataNew, JOIN.LEFT_OUTER, on=(
                     (DbStockCapitalFlatDataNew.symbol_id == DbSymbol.id) &
                     (DbStockCapitalFlatDataNew.interval == interval.value) &
                     (DbStockCapitalFlatDataNew.datetime == DbBarDataNew.datetime)
+            ))
+            .join(DbSharesData, JOIN.LEFT_OUTER, on=(
+                    (DbSharesData.symbol_id == DbStockCapitalFlatDataNew.symbol_id) &
+                    (fn.DATE(DbBarDataNew.datetime).between(DbSharesData.start_dt, DbSharesData.end_dt))
             ))
             .where(
                 *s_conditions,
@@ -812,7 +842,7 @@ class MysqlDatabase(BaseDatabase):
 
         bars: List[ExBarData] = []
         for ds in list(s.dicts()):
-            ex_bar_data: ExBarData = ExBarData.from_dict(data=ds, update={'symbol_id': ds['id']})
+            ex_bar_data: ExBarData = ExBarData.from_dict(data=ds, update={'symbol_id': ds['id'], 'circulation_shares': ds['circulation_a']})
             bars.append(ex_bar_data)
 
         return bars
@@ -1203,3 +1233,39 @@ class MysqlDatabase(BaseDatabase):
                  .order_by(DbStockCapitalFlatDataNew.datetime.asc())
                  .dicts())
         return list(query)
+
+    def save_shares_data(self, shares: List[SharesData], change_starts: List = None, stream: bool = False, conflict: Conflict = Conflict.REPLACE) -> bool:
+        """保存shares数据"""
+        # 更新当前数据的前序数据的end_dt
+        if change_starts:
+            for change in change_starts:
+                # 计算 new_date 前一天
+                symbol_id = self.symbol_ids[f"{change['symbol']}.{change['exchange']}"]
+                change_start_dt = change['start_dt']
+                previous_end_dt = change_start_dt - timedelta(days=1)
+
+                # 查询需要更新的记录
+                query = DbSharesData.update({DbSharesData.end_dt: previous_end_dt}).where(
+                    (DbSharesData.symbol_id == symbol_id) &
+                    (DbSharesData.start_dt < change_start_dt) &
+                    (DbSharesData.end_dt >= change_start_dt)
+                )
+
+                # 执行更新
+                query.execute()
+
+        # 更新当前数据
+        data = []
+        for share_data in shares:
+            symbol_id = self.symbol_ids[share_data.vt_symbol]
+            if symbol_id:
+                data.append(share_data.to_dict(update={'symbol_id': symbol_id}, exclude=['symbol', 'exchange']))
+
+        # 使用upsert操作将数据更新到数据库中
+        with self.db.atomic():
+            if conflict == Conflict.IGNORE:
+                for c in chunked(data, 50):
+                    DbSharesData.insert_many(c).on_conflict_ignore().execute()
+            else:
+                for c in chunked(data, 50):
+                    DbSharesData.insert_many(c).on_conflict_replace().execute()
