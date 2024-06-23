@@ -548,6 +548,9 @@ class DbDailyStatData(Model):
 
     last_price: float = DoubleField()
     change_pct: float = DoubleField()
+    open_chg_pct: float = DoubleField()  # 开盘涨幅
+    up_limit: float = DoubleField()         # 涨停价
+    down_limit: float = DoubleField()       # 跌停价
     volume_ratio: float = DoubleField()
     change_pct_5u: float = DoubleField()
     change_pct_10u: float = DoubleField()
