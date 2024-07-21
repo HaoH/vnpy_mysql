@@ -30,7 +30,7 @@ from vnpy.trader.database import (
     convert_tz
 )
 from vnpy.trader.setting import SETTINGS
-from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData, ExBarData, SharesData
+from ex_vnpy.object import BasicStockData, BasicIndexData, BasicSymbolData, ExBarData, SharesData, DailyStatData
 
 
 class ReconnectMySQLDatabase(ReconnectMixin, PeeweeMySQLDatabase):
@@ -459,6 +459,112 @@ class DbStockCapitalFlatDataNew(Model):
             (("interval", "datetime"), False),
         )
 
+class DbStockAuctionData(Model):
+    """股票竞价数据映射对象"""
+
+    id = AutoField()
+
+    symbol: str = CharField(max_length=32)
+    symbol_meta = ForeignKeyField(DbSymbol, column_name='symbol_id', backref='auction', verbose_name="股票基础信息")
+    # symbol_id: int = IntegerField(null=True)
+    datetime: datetime = DateTimeField()
+
+    # 竞价结束时刻，统计的所有未撤单的统计数据
+    wt_volume_B: int = IntegerField()
+    wt_turnover_B: int = IntegerField()
+    wt_volume_S: int = IntegerField()
+    wt_turnover_S: int = IntegerField()
+    net_wt_volume: int = IntegerField()
+    net_wt_turnover: int = IntegerField()
+    wt_count_B: int = IntegerField()    # 委托买单的数量
+    wt_count_S: int = IntegerField()    # 委托卖单的数量
+
+    # 分象限的委托量
+    # 1象限：高买
+    # 2象限：高卖
+    # 3象限：低卖
+    # 4象限：低买
+    # 匹配结果是1、3象限的委托量最小值
+    wt_volume_first: int = IntegerField()
+    wt_volume_second: int = IntegerField()
+    wt_volume_third: int = IntegerField()
+    wt_volume_forth: int = IntegerField()
+
+    # 当天竞价结果
+    auction_price: float = FloatField()
+    match_volume: int = IntegerField()
+    unmatch_volume: int = IntegerField()
+    #hid_net_volume: int = IntegerField()
+
+    # 试盘阶段，涨跌停位置的最大匹配、未匹配量
+    try_um_max_match_volume: int = IntegerField()      # 9:20之前，涨停价位置最大的匹配量，能够表征试盘效果
+    try_um_max_unmatch_volume: int = IntegerField()    # 9:20之前，涨停价位置最大匹配量时刻的未匹配量
+    try_dm_max_match_volume: int = IntegerField()      # 9:20之前，跌停价位置最大的匹配量，能够表征试盘效果
+    try_dm_max_unmatch_volume: int = IntegerField()    # 9:20之前，跌停价位置最大匹配量时刻的未匹配量
+
+    try_max_match_volume: int = IntegerField()          # 9:20之前，最大匹配量
+    try_max_match_price: float = FloatField()
+    try_max_unmatch_volume: int = IntegerField()        # 9:20之前，最大未匹配量
+    try_max_unmatch_price: float = FloatField()
+
+    # 9:20之后，不同时刻的竞价状态
+    match_volume_start: int = IntegerField()       # 9:20 时刻，匹配成交量
+    unmatch_volume_start: int = IntegerField()     # 9:20 时刻，未匹配成交量
+    auction_price_start: float = FloatField()      # 9:20, 最后1min时刻的竞价价格
+    match_volume_1min: int = IntegerField()         # 9:24, 最后1min时刻的匹配量
+    unmatch_volume_1min: int = IntegerField()       # 9:24, 最后1min时刻的未匹配量
+    auction_price_1min: float = FloatField()        # 9:24, 最后1min时刻的竞价价格
+    match_volume_10s: int = IntegerField()         # 9:24:50, 最后10s时刻的匹配量
+    unmatch_volume_10s: int = IntegerField()       # 9:24:50, 最后10s时刻的未匹配量
+    auction_price_10s: float = FloatField()        # 9:24:50, 最后10s时刻的竞价价格
+
+    # 未撤单的委托统计
+    wt_volume_dm_B: int = IntegerField()    # 未撤单的跌停买委托量
+    wt_volume_dm_S: int = IntegerField()    # 未撤单的跌停卖委托量
+    wt_volume_um_B: int = IntegerField()    # 未撤单的涨停买委托量
+    wt_volume_um_S: int = IntegerField()    # 未撤单的涨停卖委托量
+
+    # 撤单的委托统计
+    wt_volume_dm_S_cl: int = IntegerField()    # 撤单的跌停卖委托量
+    wt_volume_um_B_cl: int = IntegerField()    # 撤单的涨停买委托量
+
+    # 撤单委托占比
+    # 涨停位置的买单撤单委托量/（涨停位置的买单未撤单委托量 + 涨停位置的买单撤单委托量）
+    wt_volume_um_B_cl_ratio: float = FloatField()
+    # 跌停位置的撤卖单委托量/（跌停位置的卖单未撤单委托量 + 跌停位置的卖单撤单委托量）
+    wt_volume_dm_S_cl_ratio: float = FloatField()
+
+    # 跌停卖撤单速度，用来判断撤单的突然性，越接近1表示大家都是9:20左右撤单
+    # sigma(每笔撤单量*每笔撤单时间系数)/sigma(每笔撤单量)
+    # 撤单时间系数 = (撤单时间 - 9:15) / 300,   时间按秒数计算
+    wt_um_B_cl_speed: float = FloatField()     # 涨停买撤单 速度
+    wt_dm_S_cl_speed: float = FloatField()     # 跌停卖撤单 速度
+
+    # match_volume_ratio: float = FloatField()     # 今日竞价匹配量/昨日竞价匹配量，代表人气涨跌
+
+    try_um_max_duration: float = FloatField()       # 试盘阶段涨停最长持续时间, 最大值300（5分钟）
+    try_dm_max_duration: float = FloatField()       # 试盘阶段跌停最长持续时间, 最大值300（5分钟）
+    um_max_duration: float = FloatField()       # 竞价阶段涨停最长持续时间, 最大值300（5分钟）
+    dm_max_duration: float = FloatField()       # 竞价阶段跌停最长持续时间, 最大值300（5分钟）
+
+    # 尾盘竞价
+    tail_auction_price_pre: float = FloatField()         # 尾盘开始时刻的价格
+    tail_auction_price: float = FloatField()         # 尾盘结束时刻的价格
+    tail_match_volume: int = IntegerField()        # 尾盘竞价成交量
+    tail_unmatch_volume: int = IntegerField()        # 尾盘竞价买卖委托量之差，可以近似未成交量
+    tail_wt_volume_B_R: int = IntegerField()      # 尾盘竞价买单委托量(14:57之前的委托单剩余委托量)
+    tail_wt_volume_S_R: int = IntegerField()      # 尾盘竞价卖单委托量(14:57之前的委托单剩余委托量)
+    tail_wt_volume_B_N: int = IntegerField()      # 尾盘竞价买单委托量(14:57之后的委托单)
+    tail_wt_volume_S_N: int = IntegerField()      # 尾盘竞价卖单委托量(14:57之后的委托单)
+    tail_wt_count_B: int = IntegerField()       # 尾盘委托买单的数量(不论何时下单）
+    tail_wt_count_S: int = IntegerField()       # 尾盘委托卖单的数量(不论何时下单）
+
+    class Meta:
+        database: PeeweeMySQLDatabase = db
+        indexes = (
+            (("symbol_id", "datetime"), True),
+            (("datetime", ), False),
+        )
 
 # TODO: to delete
 class DbCapitalOverview(Model):
@@ -546,7 +652,7 @@ class DbDailyStatData(Model):
     datetime: datetime = DateTimeField()
     interval: str = FixedCharField(max_length=3, null=False)
 
-    last_price: float = DoubleField()
+    last_price: float = DoubleField()       # 当日收盘价
     change_pct: float = DoubleField()
     open_chg_pct: float = DoubleField()  # 开盘涨幅
     up_limit: float = DoubleField()         # 涨停价
@@ -641,6 +747,7 @@ class MysqlDatabase(BaseDatabase):
         self.db.create_tables([DbBarDataNew, DbTickData, DbBarOverviewNew, DbTickOverview])
         self.db.create_tables([DbSymbol, DbStockMeta, DbIndexMeta, DbSymbolLists, DbSymbolListMap])
         self.db.create_tables([DbStockCapitalDataNew, DbStockCapitalFlatDataNew])
+        self.db.create_tables([DbStockAuctionData])
         self.db.create_tables([DbUserData, DbOperation, DbAliyunBinlogFiles, DbBacktestingResults])
 
         self.symbol_ids = self.get_symbol_ids_by_market('CS', Market.CN)
@@ -850,6 +957,52 @@ class MysqlDatabase(BaseDatabase):
 
         return bars
 
+    def load_daily_stat_data(
+            self,
+            interval: Interval,
+            start: datetime,
+            end: datetime,
+            symbol: str = None,
+            exchange: Exchange = None,
+            stype: str = "CS"
+    ) -> List[DailyStatData]:
+        s_conditions = [DbSymbol.type == stype]
+        if symbol:
+            s_conditions.append(DbSymbol.symbol == symbol)
+        if exchange:
+            s_conditions.append(DbSymbol.exchange == exchange.value)
+
+        s: ModelSelect = (
+            DbDailyStatData
+            .select(DbSymbol,
+                    DbBarDataNew,
+                    DbDailyStatData,
+                    DbSharesData.circulation_a)
+            .join(DbSymbol)
+            .join(DbBarDataNew, JOIN.LEFT_OUTER, on=(
+                    (DbBarDataNew.symbol_id == DbSymbol.id) &
+                    (DbBarDataNew.interval == interval.value) &
+                    (DbBarDataNew.datetime == DbDailyStatData.datetime)
+            ))
+            .join(DbSharesData, JOIN.LEFT_OUTER, on=(
+                    (DbSharesData.symbol_id == DbDailyStatData.symbol_id) &
+                    (fn.DATE(DbBarDataNew.datetime).between(DbSharesData.start_dt, DbSharesData.end_dt))
+            ))
+            .where(
+                *s_conditions,
+                DbDailyStatData.interval == interval.value,
+                DbDailyStatData.datetime >= start,
+                DbDailyStatData.datetime <= end
+            )
+            .order_by(DbDailyStatData.datetime)
+        )
+
+        bars: List[DailyStatData] = []
+        for ds in list(s.dicts()):
+            ex_bar_data: DailyStatData = DailyStatData.from_dict(data=ds, update={'symbol_id': ds['id'], 'circulation_shares': ds['circulation_a']})
+            bars.append(ex_bar_data)
+
+        return bars
 
     def load_tick_data(
             self,
@@ -1179,6 +1332,20 @@ class MysqlDatabase(BaseDatabase):
                         (DbStockCapitalFlatDataNew.interval == 'd'))
                  .group_by(DbStockCapitalFlatDataNew.datetime)
                  .order_by(DbStockCapitalFlatDataNew.datetime))
+
+        # 提取日部分，并格式化为 dd 格式
+        days_dd = [record.datetime.strftime('%d') for record in query]
+
+        return days_dd
+
+    def get_auction_days(self, start_date: datetime, end_date: datetime) -> List[str]:
+        # 查询并去重
+        query = (DbStockAuctionData
+                 .select(DbStockAuctionData.datetime)
+                 .where((DbStockAuctionData.datetime >= start_date) &
+                        (DbStockAuctionData.datetime <= end_date))
+                 .group_by(DbStockAuctionData.datetime)
+                 .order_by(DbStockAuctionData.datetime))
 
         # 提取日部分，并格式化为 dd 格式
         days_dd = [record.datetime.strftime('%d') for record in query]
